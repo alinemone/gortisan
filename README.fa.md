@@ -191,6 +191,9 @@ gortisan.bat list               # cmd
 | `make:middleware <name>` | `internal/api/middleware/<name>.go` |
 | `make:client <name>` | `internal/platform/<name>/client.go`، کلاینت JSON برای یک سرویس دیگر |
 | `make:migration <name>` | فایل‌های خالی `migrations/<time>_<name>.{up,down}.sql` |
+| `make:test <subject>` | `service_test.go`: تست سرویس با یک `Store` درون‌حافظه‌ای، بدون دیتابیس |
+| `make:test <version>/<subject>/<action>` | `<action>_test.go`: تست HTTP همان handler |
+| `add <postgres\|redis>` | بخشی را که پروژه بدون آن ساخته شده اضافه می‌کند: فایل‌ها، config، خط‌های `.env.example` و ماژول؛ دو خطی را که باید وصل کنید چاپ می‌کند |
 | `make:seeder <name>` | `internal/seed/<name>.go`، و `cmd/seed` بار اول |
 | `migrate` | migrationهای اجرانشده را در یک batch اعمال می‌کند |
 | `migrate:rollback [batches]` | آخرین batch (یا چند batch) را برمی‌گرداند |
@@ -454,8 +457,7 @@ g.Use(middleware.Authenticate(s.Tokens))
 
 ## هنوز پشتیبانی نمی‌شود
 
-- `make:test`، `route:list`، مستندات OpenAPI / Swagger
-- اجرای دوبارهٔ `create` در یک پروژهٔ موجود برای اضافه کردن یک بخش جاافتاده
+- `route:list`، مستندات OpenAPI / Swagger
 
 ## توسعه
 

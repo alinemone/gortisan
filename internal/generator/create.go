@@ -98,19 +98,10 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		{"gortisan.ps1", "create/gortisan.ps1.tmpl"},
 	}
 	if data.Postgres {
-		outputs = append(outputs,
-			output{"internal/platform/database/database.go", "create/database.go.tmpl"},
-			output{"internal/platform/database/orm/orm.go", "create/orm.go.tmpl"},
-			output{"internal/platform/database/orm/query.go", "create/query.go.tmpl"},
-			output{"internal/platform/database/orm/query_test.go", "create/query_test.go.tmpl"},
-			output{"migrations/migrations.go", "create/migrations_embed.go.tmpl"},
-			output{"internal/platform/database/migrate/migrate.go", "create/migrate.go.tmpl"},
-			output{"internal/platform/database/migrate/migrate_test.go", "create/migrate_test.go.tmpl"},
-			output{"cmd/migrate/main.go", "create/migrate_main.go.tmpl"},
-		)
+		outputs = append(outputs, componentOutputs("postgres")...)
 	}
 	if data.Redis {
-		outputs = append(outputs, output{"internal/platform/cache/redis.go", "create/redis.go.tmpl"})
+		outputs = append(outputs, componentOutputs("redis")...)
 	}
 
 	if err := renderAll(root, outputs, data, false, report); err != nil {

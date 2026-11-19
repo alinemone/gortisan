@@ -1,0 +1,54 @@
+package {{.Pkg}}
+
+import (
+	"context"
+	"errors"
+	"testing"
+)
+
+// fakeStore is an in-memory Store, so the service can be tested without a
+// database. It embeds Store: a method it does not implement panics when
+// called — implement the ones your tests need.
+type fakeStore struct {
+	Store
+	rows   map[int64]*{{.Type}}
+	nextID int64
+}
+
+func newFakeStore() *fakeStore {
+	return &fakeStore{rows: map[int64]*{{.Type}}{}}
+}
+
+func (f *fakeStore) Find(ctx context.Context, id int64) (*{{.Type}}, error) {
+	m, ok := f.rows[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return m, nil
+}
+
+func (f *fakeStore) Create(ctx context.Context, m *{{.Type}}) error {
+	f.nextID++
+	m.ID = f.nextID
+	f.rows[m.ID] = m
+	return nil
+}
+
+func TestServiceFind(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeStore()
+	s := NewService(store)
+
+	if _, err := s.Find(ctx, 1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Find on an empty store: err = %v, want ErrNotFound", err)
+	}
+
+	m := &{{.Type}}{}
+	if err := store.Create(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Find(ctx, m.ID)
+	if err != nil || got != m {
+		t.Fatalf("Find(%d) = %v, %v; want the stored {{.Words}}", m.ID, got, err)
+	}
+}

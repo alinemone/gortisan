@@ -117,6 +117,8 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 					step{kind: "model", name: "tag"},
 					step{kind: "service", name: "tag"}, // after the model: built on the Store
 					step{kind: "handler", name: "v1/tag/list"},
+					step{kind: "test", name: "tag"},            // a service test with a fake Store
+					step{kind: "test", name: "v1/tag/list"},    // a handler test
 					step{kind: "model", name: "sales/payment"}, // a grouped subject
 					step{kind: "service", name: "sales/payment"},
 					step{kind: "handler", name: "v1/sales/payment/get"},
@@ -372,5 +374,55 @@ func TestMigrationsInTheSameSecondGetDistinctVersions(t *testing.T) {
 	}
 	if len(seen) != 3 {
 		t.Fatalf("want 3 versions, got %v", ups)
+	}
+}
+
+// TestAddComponent adds redis and postgres to a project created with none.
+// It runs go get and go mod tidy, so -short skips it.
+func TestAddComponent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("downloads modules")
+	}
+	dir := t.TempDir()
+	if _, err := Create(dir, "svc", CreateOptions{Module: "example.com/svc", With: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := FindProject(filepath.Join(dir, "svc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, component := range []string{"redis", "postgres"} {
+		report, err := Add(p, component)
+		if err != nil {
+			t.Fatalf("add %s: %v", component, err)
+		}
+		if len(report.Next) == 0 {
+			t.Errorf("add %s printed no wiring hints", component)
+		}
+		if _, err := Add(p, component); err == nil {
+			t.Errorf("adding %s twice: want an error", component)
+		}
+	}
+	for _, rel := range []string{"internal/platform/cache/redis.go", "internal/platform/config/redis.go", "internal/platform/database/orm/orm.go", "internal/platform/config/postgres.go", "cmd/migrate/main.go"} {
+		if !p.exists(rel) {
+			t.Errorf("%s was not written", rel)
+		}
+	}
+	gomod, _ := os.ReadFile(filepath.Join(p.Root, "go.mod"))
+	env, _ := os.ReadFile(filepath.Join(p.Root, ".env.example"))
+	if !strings.Contains(string(gomod), "github.com/jackc/pgx/v5") || !strings.Contains(string(gomod), "github.com/redis/go-redis/v9") {
+		t.Errorf("go.mod lacks the modules:\n%s", gomod)
+	}
+	if !strings.Contains(string(env), "POSTGRES_HOST") || !strings.Contains(string(env), "REDIS_ADDR") {
+		t.Errorf(".env.example lacks the settings:\n%s", env)
+	}
+	// The platform packages themselves build before any wiring.
+	cmd := exec.Command("go", "vet", "./internal/platform/...")
+	cmd.Dir = p.Root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go vet ./internal/platform/...: %v\n%s", err, out)
+	}
+	if _, err := Add(p, "kafka"); err == nil {
+		t.Error("an unknown component must be rejected")
 	}
 }

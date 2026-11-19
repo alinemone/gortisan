@@ -98,7 +98,7 @@ type MakeOptions struct {
 // MakeKinds are what `gortisan make` can write.
 var MakeKinds = []string{
 	"model", "service", "handler", "request", "response", "validator", "enum",
-	"cache", "middleware", "client", "migration", "seeder",
+	"cache", "middleware", "client", "migration", "seeder", "test",
 }
 
 // Make writes one building block of kind named name into p.
@@ -138,6 +138,8 @@ func Make(p *Project, kind, name string, opts MakeOptions) (*Report, error) {
 		err = makeMigration(p, name, opts, report)
 	case "seeder":
 		err = makeSeeder(p, name, opts, report)
+	case "test":
+		err = makeTest(p, name, opts, report)
 	default:
 		err = fmt.Errorf("unknown kind %q; choose from %s", kind, strings.Join(MakeKinds, ", "))
 	}
@@ -240,6 +242,7 @@ type data struct {
 	Route        string
 	Method       string
 	Path         string
+	TestURL      string
 
 	Message string
 	Base    string

@@ -1,0 +1,35 @@
+package {{.Pkg}}
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/labstack/echo/v5"
+{{- if .HasService}}
+
+	"{{.DomainImport}}"
+{{- end}}
+)
+{{- if .HasService}}
+
+// {{.Var}}{{.Action}}Store stands in for the database. It embeds the Store
+// interface: implement the methods {{.Action}} uses, the others panic.
+type {{.Var}}{{.Action}}Store struct {
+	{{.DomainPkg}}.Store
+}
+{{- end}}
+
+func Test{{.Action}}(t *testing.T) {
+	h := NewHandler({{if .HasService}}{{.DomainPkg}}.NewService({{.Var}}{{.Action}}Store{}){{end}})
+	e := echo.New()
+	e.Add("{{.Method}}", "{{.Path}}", h.{{.Action}})
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest("{{.Method}}", "{{.TestURL}}", nil))
+
+	// Assert the status and body you expect once {{.Action}} is implemented.
+	if rec.Code == http.StatusInternalServerError {
+		t.Fatalf("{{.Method}} {{.TestURL}} = %d %s", rec.Code, rec.Body.String())
+	}
+}

@@ -57,6 +57,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runCreate(args[1:], stdout, stderr)
 	case "make":
 		return runMake(args[1:], stdout, stderr)
+	case "add":
+		return runAdd(args[1:], stdout, stderr)
 	case "run", "serve":
 		return runRun(args[1:], stdout, stderr)
 	case "generate", "gen":
@@ -321,6 +323,31 @@ func runProject(command string, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// runAdd is `gortisan add <postgres|redis>`.
+func runAdd(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: gortisan add <postgres|redis>")
+		return 2
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	project, err := generator.FindProject(cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	report, err := generator.Add(project, args[0])
+	printReport(stdout, report)
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	return 0
+}
+
 func printReport(w io.Writer, report *generator.Report) {
 	if report == nil {
 		return
@@ -370,6 +397,8 @@ Usage:
 
   gortisan run [command] [-- args]      build and run cmd/<command>, restarting on changes
       --no-watch                        run once, without watching
+  gortisan add <postgres|redis>         add a piece the project was created without
+
   gortisan migrate                      apply pending migrations (runs go run ./cmd/migrate)
   gortisan migrate:rollback [batches]   undo the last batch (or several)
   gortisan migrate:status               list migrations and whether they ran
@@ -404,6 +433,8 @@ Usage:
     client <name>                       internal/platform/<name>/client.go, an HTTP client
     migration <name>                    empty migrations/<time>_<name>.{up,down}.sql
     seeder <name>                       internal/seed/<name>.go, and cmd/seed
+    test <subject>                      service_test.go with an in-memory Store
+    test <version>/<subject>/<action>   <action>_test.go for that handler
 
   Files that collect several declarations (handler.go, request.go, ...) are
   appended to; a name that already exists is left alone. --force overwrites

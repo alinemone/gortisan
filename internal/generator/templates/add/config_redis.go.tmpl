@@ -1,0 +1,17 @@
+package config
+
+// Redis is the Redis connection. Add `Redis Redis` to Config and
+// `Redis: r.redis(),` to Load.
+type Redis struct {
+	Addr     string
+	Password string
+	DB       int
+}
+
+func (r *reader) redis() Redis {
+	return Redis{
+		Addr:     r.str("REDIS_ADDR", "localhost:6379"),
+		Password: r.str("REDIS_PASSWORD", ""),
+		DB:       r.integer("REDIS_DB", 0),
+	}
+}

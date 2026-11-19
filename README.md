@@ -188,6 +188,9 @@ the same code, nobody needs gortisan installed, and `go.mod` stays untouched.
 | `make:middleware <name>` | `internal/api/middleware/<name>.go` |
 | `make:client <name>` | `internal/platform/<name>/client.go`, a JSON HTTP client for another service |
 | `make:migration <name>` | empty `migrations/<time>_<name>.{up,down}.sql` |
+| `make:test <subject>` | `service_test.go`: a service test with an in-memory `Store`, no database |
+| `make:test <version>/<subject>/<action>` | `<action>_test.go`: an HTTP test of that handler |
+| `add <postgres\|redis>` | adds a piece the project was created without: its files, config, `.env.example` lines and module; prints the two lines to wire |
 | `make:seeder <name>` | `internal/seed/<name>.go`, and `cmd/seed` the first time |
 | `migrate` | applies pending migrations as one batch (`go run ./cmd/migrate`) |
 | `migrate:rollback [batches]` | undoes the last batch, or several |
@@ -465,8 +468,7 @@ when you need them — a middleware, a client in `platform/`, a line in
 
 ## Not supported yet
 
-- `make:test`, `route:list`, OpenAPI / Swagger docs
-- running `create` again in an existing project to add a missing piece
+- `route:list`, OpenAPI / Swagger docs
 
 ## Development
 
