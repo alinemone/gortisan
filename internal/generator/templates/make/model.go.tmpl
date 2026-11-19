@@ -1,4 +1,4 @@
-package model
+package {{.Pkg}}
 
 import (
 {{- if .JSON}}
@@ -7,13 +7,12 @@ import (
 	"time"
 )
 
-// {{.Type}} is a row of {{.Table}}. Every field with a db tag is a column;
-// internal/repository/{{.Name}}_table_gen.go is generated from them.
-//
-// To add a column, add a field — e.g. Name string `db:"name" json:"name"` —
-// and a migration; gortisan run (or ./gortisan generate) updates the mapping.
+// {{.Type}} is a row of {{.Table}}. Every field with a db tag is a column, and
+// the mapping in repository.go is generated from them (by gortisan run on
+// save, or ./gortisan generate). To add a column, add a field — e.g.
+// Name string `db:"name" json:"name"` — and a migration.
 // db tag options: pk for the primary key, default for a column the database
-// fills (it is read back, never inserted).
+// fills (read back, never inserted).
 //
 //gortisan:table {{.Table}}
 type {{.Type}} struct {

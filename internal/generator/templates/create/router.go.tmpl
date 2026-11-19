@@ -4,12 +4,12 @@ package router
 import (
 	"github.com/labstack/echo/v4"
 
-	"{{.Module}}/internal/handler"
+	"{{.Module}}/internal/health"
 )
 
 // Handlers are the handlers the routes call. main.go builds them.
 type Handlers struct {
-	Health *handler.HealthHandler
+	Health *health.Handler
 {{- if .Metrics}}
 	Metrics echo.HandlerFunc
 {{- end}}
@@ -24,5 +24,5 @@ func Register(e *echo.Echo, h Handlers) {
 {{- end}}
 
 	v1 := e.Group("/v1")
-	_ = v1 // e.g. v1.GET("/orders/:id", h.Order.GetOrder)
+	_ = v1 // e.g. v1.GET("/users", h.User.List)
 }

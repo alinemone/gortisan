@@ -1,4 +1,5 @@
-package handler
+// Package health answers liveness and readiness probes.
+package health
 
 import (
 {{- if or .Postgres .Redis}}
@@ -18,8 +19,8 @@ import (
 {{- end}}
 )
 
-// HealthHandler answers liveness and readiness probes.
-type HealthHandler struct {
+// Handler answers /ping and /health.
+type Handler struct {
 {{- if .Postgres}}
 	db *pgxpool.Pool
 {{- end}}
@@ -28,28 +29,28 @@ type HealthHandler struct {
 {{- end}}
 }
 
-func NewHealthHandler({{if .Postgres}}db *pgxpool.Pool{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}redis *redis.Client{{end}}) *HealthHandler {
-	return &HealthHandler{ {{- if .Postgres}}db: db{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}redis: redis{{end -}} }
+func NewHandler({{if .Postgres}}db *pgxpool.Pool{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}redis *redis.Client{{end}}) *Handler {
+	return &Handler{ {{- if .Postgres}}db: db{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}redis: redis{{end -}} }
 }
 
 // Ping answers {"ping":"pong"}: the process is up.
-func (h *HealthHandler) Ping(c echo.Context) error {
+func (h *Handler) Ping(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"ping": "pong"})
 }
 
-// HealthResponse is the body of Check.
-type HealthResponse struct {
+// Response is the body of Check.
+type Response struct {
 	Status string            `json:"status"`
 	Checks map[string]string `json:"checks"`
 }
 
 // Check answers 200 when every dependency responds, 503 otherwise.
-func (h *HealthHandler) Check(c echo.Context) error {
+func (h *Handler) Check(c echo.Context) error {
 {{- if or .Postgres .Redis}}
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Second)
 	defer cancel()
 {{end}}
-	response := HealthResponse{Status: "pass", Checks: map[string]string{}}
+	response := Response{Status: "pass", Checks: map[string]string{}}
 {{- if .Postgres}}
 	response.Checks["postgres"] = "up"
 	if err := h.db.Ping(ctx); err != nil {

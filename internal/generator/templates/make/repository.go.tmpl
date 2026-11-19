@@ -1,58 +1,56 @@
-package repository
+package {{.Pkg}}
 
 import (
 	"context"
 
 	"{{.Module}}/internal/database"
 	"{{.Module}}/internal/database/orm"
-	"{{.Module}}/internal/model"
 )
 
-// {{.Var}}Table (the column mapping) is generated from model.{{.Type}} into
-// {{.Name}}_table_gen.go.
-
-// {{.Type}}Repository reads and writes {{.Table}}.
-type {{.Type}}Repository struct {
+// Repository reads and writes {{.Table}}.
+type Repository struct {
 	db database.DBTX
 }
 
-func New{{.Type}}Repository(db database.DBTX) *{{.Type}}Repository {
-	return &{{.Type}}Repository{db: db}
+func NewRepository(db database.DBTX) *Repository {
+	return &Repository{db: db}
 }
 
 // WithTx returns a copy that runs its queries in tx.
-func (r *{{.Type}}Repository) WithTx(tx database.DBTX) *{{.Type}}Repository {
-	return &{{.Type}}Repository{db: tx}
+func (r *Repository) WithTx(tx database.DBTX) *Repository {
+	return &Repository{db: tx}
 }
 
-// FindByID returns orm.ErrNotFound when there is no such row.
-func (r *{{.Type}}Repository) FindByID(ctx context.Context, id int64) (*model.{{.Type}}, error) {
+// Find returns orm.ErrNotFound when there is no such row.
+func (r *Repository) Find(ctx context.Context, id int64) (*{{.Type}}, error) {
 	return {{.Var}}Table.Find(ctx, r.db, id)
 }
 
-func (r *{{.Type}}Repository) List(ctx context.Context, limit, offset int) ([]*model.{{.Type}}, error) {
+func (r *Repository) List(ctx context.Context, limit, offset int) ([]*{{.Type}}, error) {
 	return {{.Var}}Table.Get(ctx, r.db, orm.All().OrderBy("id DESC").Limit(limit).Offset(offset))
 }
 
 // Create inserts m and fills its id and timestamps.
-func (r *{{.Type}}Repository) Create(ctx context.Context, m *model.{{.Type}}) error {
+func (r *Repository) Create(ctx context.Context, m *{{.Type}}) error {
 	return {{.Var}}Table.Create(ctx, r.db, m)
 }
 
-// Update writes set, e.g. orm.Set{"status": "paid"}, and returns the stored row.
-func (r *{{.Type}}Repository) Update(ctx context.Context, id int64, set orm.Set) (*model.{{.Type}}, error) {
+// Update writes set, e.g. orm.Set{"name": "..."}, and returns the stored row.
+func (r *Repository) Update(ctx context.Context, id int64, set orm.Set) (*{{.Type}}, error) {
 	return {{.Var}}Table.Update(ctx, r.db, id, set)
 }
 
 {{if .SoftDelete}}// Delete sets deleted_at; the row is then skipped by every query above.{{else}}// Delete removes the row.{{end}}
-func (r *{{.Type}}Repository) Delete(ctx context.Context, id int64) error {
+func (r *Repository) Delete(ctx context.Context, id int64) error {
 	return {{.Var}}Table.Delete(ctx, r.db, id)
 }
 
 // Plain SQL works next to the mapper, on the same connection or transaction:
 //
-//	func (r *{{.Type}}Repository) CountSince(ctx context.Context, since time.Time) (int64, error) {
+//	func (r *Repository) CountSince(ctx context.Context, since time.Time) (int64, error) {
 //		var n int64
 //		err := r.db.QueryRow(ctx, `SELECT count(*) FROM {{.Table}} WHERE created_at >= $1`, since).Scan(&n)
 //		return n, err
 //	}
+//
+// The mapping below is generated from {{.Type}}; change the struct, not the mapping.

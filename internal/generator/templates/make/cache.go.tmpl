@@ -1,4 +1,4 @@
-package cache
+package {{.Pkg}}
 
 import (
 	"context"
@@ -8,10 +8,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-{{- if .ModelImport}}
-
-	"{{.Module}}/internal/model"
-{{- end}}
 )
 
 // {{.Type}} keeps {{.Value}} values in Redis under "{{.Prefix}}:<key>" for ttl,
@@ -24,7 +20,7 @@ type {{.Type}} struct {
 
 // New{{.Type}} builds the cache in main.go, e.g.
 //
-//	cache.New{{.Type}}(rdb, time.Hour, func(ctx context.Context, key string) ({{.Value}}, error) {
+//	{{.Pkg}}.New{{.Type}}(rdb, time.Hour, func(ctx context.Context, key string) ({{.Value}}, error) {
 //		return service.Something(ctx, key)
 //	})
 func New{{.Type}}(client *redis.Client, ttl time.Duration, load func(ctx context.Context, key string) ({{.Value}}, error)) *{{.Type}} {

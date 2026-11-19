@@ -37,9 +37,9 @@ type Event struct {
 	ChangeData  []string       `json:"change_data"`
 }
 
-// publish sends one event keyed by id. before and after are what consumers
+// Publish sends one event keyed by id. before and after are what consumers
 // see of the row (nil before an insert and after a delete).
-func publish(ctx context.Context, w *kafkago.Writer, topic string, id int64, operation string, before, after any) error {
+func Publish(ctx context.Context, w *kafkago.Writer, topic string, id int64, operation string, before, after any) error {
 	event := Event{ReferenceID: id, LogTime: time.Now().Format(logTimeLayout), Operation: operation}
 	var err error
 	if event.OldData, err = object(before); err != nil {

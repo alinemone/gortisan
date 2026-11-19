@@ -1,46 +1,46 @@
-package cdc
+package {{.Pkg}}
 
 import (
 	"context"
 
 	kafkago "github.com/segmentio/kafka-go"
 
-	"{{.Module}}/internal/model"
+	"{{.Module}}/internal/cdc"
 )
 
-const {{.Type}}Topic = "{{.Topic}}"
+const CDCTopic = "{{.Topic}}"
 
-// {{.Type}}Data is what consumers see of a {{.Model}}. List only the fields
-// they need; a change to any other field publishes nothing.
-type {{.Type}}Data struct {
+// CDCData is what consumers see of a {{.Type}}. List only the fields they
+// need; a change to any other field publishes nothing.
+type CDCData struct {
 	ID int64 `json:"id"`
 }
 
-func {{.Var}}Data(m *model.{{.Model}}) {{.Type}}Data {
-	return {{.Type}}Data{
+func newCDCData(m *{{.Type}}) CDCData {
+	return CDCData{
 		ID: m.ID,
 	}
 }
 
-// {{.Type}} publishes changes of model.{{.Model}} to {{.Topic}}. Call it after
-// the transaction commits.
-type {{.Type}} struct {
+// CDC publishes changes of {{.Type}} to {{.Topic}}. Call it after the
+// transaction commits.
+type CDC struct {
 	writer *kafkago.Writer
 }
 
-func New{{.Type}}(writer *kafkago.Writer) *{{.Type}} {
-	return &{{.Type}}{writer: writer}
+func NewCDC(writer *kafkago.Writer) *CDC {
+	return &CDC{writer: writer}
 }
 
-func (c *{{.Type}}) Created(ctx context.Context, m *model.{{.Model}}) error {
-	return publish(ctx, c.writer, {{.Type}}Topic, m.ID, Insert, nil, {{.Var}}Data(m))
+func (c *CDC) Created(ctx context.Context, m *{{.Type}}) error {
+	return cdc.Publish(ctx, c.writer, CDCTopic, m.ID, cdc.Insert, nil, newCDCData(m))
 }
 
-// Updated publishes nothing when no field of {{.Type}}Data changed.
-func (c *{{.Type}}) Updated(ctx context.Context, before, after *model.{{.Model}}) error {
-	return publish(ctx, c.writer, {{.Type}}Topic, after.ID, Update, {{.Var}}Data(before), {{.Var}}Data(after))
+// Updated publishes nothing when no field of CDCData changed.
+func (c *CDC) Updated(ctx context.Context, before, after *{{.Type}}) error {
+	return cdc.Publish(ctx, c.writer, CDCTopic, after.ID, cdc.Update, newCDCData(before), newCDCData(after))
 }
 
-func (c *{{.Type}}) Deleted(ctx context.Context, m *model.{{.Model}}) error {
-	return publish(ctx, c.writer, {{.Type}}Topic, m.ID, Delete, {{.Var}}Data(m), nil)
+func (c *CDC) Deleted(ctx context.Context, m *{{.Type}}) error {
+	return cdc.Publish(ctx, c.writer, CDCTopic, m.ID, cdc.Delete, newCDCData(m), nil)
 }

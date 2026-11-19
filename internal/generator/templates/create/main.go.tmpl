@@ -20,7 +20,7 @@ import (
 {{- if .Postgres}}
 	"{{.Module}}/internal/database"
 {{- end}}
-	"{{.Module}}/internal/handler"
+	"{{.Module}}/internal/health"
 {{- if .Metrics}}
 	"{{.Module}}/internal/metrics"
 {{- end}}
@@ -74,14 +74,12 @@ func run() error {
 	//
 	// Workers run in their own process: go run ./cmd/worker <name>.
 {{end}}
-	// Repositories, services and handlers are built here and passed down.
-	// Example:
+	// Each feature is built here, from the bottom up, e.g.
 	//
-	//	orders := repository.NewOrderRepository(db)
-	//	orderService := service.NewOrderService(orders)
-	//	handlers.Order = handler.NewOrderHandler(orderService)
+	//	users := user.NewService(user.NewRepository(db))
+	//	handlers.User = user.NewHandler(users)
 	handlers := router.Handlers{
-		Health: handler.NewHealthHandler({{if .Postgres}}db{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}rdb{{end}}),
+		Health: health.NewHandler({{if .Postgres}}db{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}rdb{{end}}),
 {{- if .Metrics}}
 		Metrics: m.Handler(cfg.MetricsSecret),
 {{- end}}

@@ -17,37 +17,49 @@ curl localhost:8080/metrics  # Prometheus; set METRICS_SECRET to require a beare
 ```
 {{- if .Kafka}}
 
-Workers run in their own process: `./gortisan run worker -- <name>` or
-`go run ./cmd/worker <name>`.
+Workers run in their own process: `./gortisan run worker -- <feature>.<name>` or
+`go run ./cmd/worker <feature>.<name>`.
 {{- end}}
 
 ## Layout
 
-| Path | What it does |
-|------|--------------|
-| `cmd/{{.Name}}/main.go` | builds every dependency in order and starts the server |
-| `internal/config` | reads environment variables (and `.env`) into a `Config` |
-| `internal/server` | echo with request logging, panic recovery, JSON errors, graceful shutdown |
-| `internal/router` | the full list of routes |
-| `internal/handler` | HTTP handlers: read the request, call a service, write the response |
-| `internal/service` | business logic |
-| `internal/validate` | collects field errors into one 422 |
+The layout the Go team recommends for servers
+([go.dev/doc/modules/layout](https://go.dev/doc/modules/layout#server-project)):
+commands in `cmd/`, the rest in `internal/`. Each subject is one package with
+focused files, not one package per layer:
+
+```
+cmd/{{.Name}}/main.go       builds every dependency in order and starts the server
+internal/
+  user/                 one package per subject (make:model user, make:handler user/list…)
+    user.go             the struct — the table
+    repository.go       reads and writes the table; its mapping is generated at the end
+    service.go          business logic
+    handler.go          HTTP endpoints
+    request.go          inputs, with Validate
+    response.go         outputs
+  config/               environment variables (and .env) → Config
+  server/               echo: request log, panic recovery, JSON errors, graceful shutdown
+  router/               every route, in one file
+  health/               /ping and /health
+  validate/             field errors → one 422
 {{- if .Postgres}}
-| `internal/database` | the PostgreSQL pool, `DBTX` and `InTx` |
-| `internal/database/orm` | a small mapper from structs to tables (optional, see below) |
-| `internal/model` | table rows as plain structs |
-| `internal/repository` | reads and writes tables |
-| `migrations` | SQL migrations, `*.up.sql` / `*.down.sql` |
+  database/             the PostgreSQL pool, DBTX and InTx
+  database/orm/         a small mapper from structs to tables (optional)
 {{- end}}
 {{- if .Redis}}
-| `internal/cache` | the Redis client and typed caches |
+  cache/                the Redis client
 {{- end}}
 {{- if .Kafka}}
-| `internal/kafka` | Kafka readers, writers and `Publish` |
+  kafka/                Kafka readers, writers and Publish
 {{- end}}
 {{- if .Metrics}}
-| `internal/metrics` | Prometheus metrics and `/metrics` |
+  metrics/              Prometheus metrics and /metrics
 {{- end}}
+{{- if .Postgres}}
+migrations/             SQL migrations, *.up.sql / *.down.sql
+{{- end}}
+```
 
 ## Rules
 
@@ -63,21 +75,22 @@ Workers run in their own process: `./gortisan run worker -- <name>` or
 
 ## The database layer
 
-A model is a struct; every field with a `db` tag is a column (`db:"id,pk"` for the
-primary key, `db:"created_at,default"` for a column the database fills). The
-mapping in `internal/repository/*_table_gen.go` is generated from it — by
-`make:model`, by `./gortisan run` on every save, or by `./gortisan generate`.
+A model is a struct marked `//gortisan:table <name>`; every field with a `db` tag
+is a column (`db:"id,pk"` for the primary key, `db:"created_at,default"` for a
+column the database fills). Its mapping is generated into the end of the
+package's `repository.go`, between `// gortisan:table <Type> begin` and `end` —
+by `make:model`, by `./gortisan run` on every save, or by `./gortisan generate`.
 To add a column, add a field and a migration. Nothing reads the tags at run
 time. Using the mapper is optional:
 
 ```go
 // with the mapper
-order, err := orderTable.Find(ctx, r.db, id)
-orders, err := orderTable.Get(ctx, r.db, orm.Where("user_id = ?", userID).OrderBy("id DESC").Limit(20))
+u, err := userTable.Find(ctx, r.db, id)
+users, err := userTable.Get(ctx, r.db, orm.Where("mobile LIKE ?", "0912%").OrderBy("id DESC").Limit(20))
 
 // plain SQL, same connection or transaction
 var n int64
-err := r.db.QueryRow(ctx, `SELECT count(*) FROM orders WHERE status = $1`, status).Scan(&n)
+err := r.db.QueryRow(ctx, `SELECT count(*) FROM users WHERE created_at >= $1`, since).Scan(&n)
 ```
 
 To drop the mapper, rewrite the repository methods with SQL and delete
@@ -93,25 +106,23 @@ do not want them.
 
 ```bash
 ./gortisan list                                   # every command and flag
-./gortisan make:handler order/get_order
-./gortisan make:service order
-./gortisan make:middleware request_id
-./gortisan make:request order/create_order
-./gortisan make:response order/order_detail
-./gortisan make:validator order/not_paid
-./gortisan make:enum order_status --members "pending,paid,sent"
-./gortisan make:client salam-pay
 {{- if .Postgres}}
-./gortisan make:model order                   # columns: fields with db tags in the struct
-./gortisan make:migration add_index_to_orders
+./gortisan make:model user                        # internal/user: user.go, repository.go + a migration
+./gortisan make:migration add_index_to_users
 {{- end}}
+./gortisan make:service user                      # internal/user/service.go
+./gortisan make:handler user/list                 # handler.go + ListRequest + ListResponse
+./gortisan make:enum user/status --members "active,blocked"
+./gortisan make:validator user/mobile_free
+./gortisan make:middleware request_id
+./gortisan make:client payment
 {{- if .Redis}}
-./gortisan make:cache vendor_order_count --type int64
+./gortisan make:cache user/profile --type "*User"
 {{- end}}
 {{- if .Kafka}}
-./gortisan make:worker send_notifications --topic notifications
+./gortisan make:worker user/send_welcome --topic users.created
 {{- if .Postgres}}
-./gortisan make:cdc order
+./gortisan make:cdc user
 {{- end}}
 {{- end}}
 ```

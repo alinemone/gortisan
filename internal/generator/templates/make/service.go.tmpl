@@ -1,12 +1,14 @@
-package service
+package {{.Pkg}}
 
-// {{.Type}} holds business logic. Add its dependencies (repositories, other
-// services, clients) as fields and pass them to New{{.Type}} in main.go.
-//
-// Methods take a context.Context first and return plain errors; the handler
-// decides which HTTP status an error becomes.
-type {{.Type}} struct{}
+// Service holds the {{.Pkg}} business logic. Its dependencies are passed to
+// NewService in main.go. Methods take a context first and return plain
+// errors; the handler decides which HTTP status an error becomes.
+type Service struct {
+{{- if .HasRepository}}
+	repo *Repository
+{{- end}}
+}
 
-func New{{.Type}}() *{{.Type}} {
-	return &{{.Type}}{}
+func NewService({{if .HasRepository}}repo *Repository{{end}}) *Service {
+	return &Service{ {{- if .HasRepository}}repo: repo{{end -}} }
 }

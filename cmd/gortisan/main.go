@@ -290,7 +290,11 @@ func printReport(w io.Writer, report *generator.Report) {
 		fmt.Fprintln(w, "removed", path)
 	}
 	for _, path := range report.Skipped {
-		fmt.Fprintln(w, "exists ", path, "(kept; --force overwrites)")
+		if strings.Contains(path, "already exists") {
+			fmt.Fprintln(w, "exists ", path)
+		} else {
+			fmt.Fprintln(w, "exists ", path, "(kept; --force overwrites)")
+		}
 	}
 	for _, next := range report.Next {
 		fmt.Fprintln(w, "next:  ", next)
@@ -322,32 +326,37 @@ Usage:
 
   gortisan run [command] [-- args]      build and run cmd/<command>, restarting on changes
       --no-watch                        run once, without watching
-  gortisan generate [--check]           write the table mappings of internal/model
+  gortisan generate [--check]           write the table mapping of every //gortisan:table
+                                        struct into its repository.go
                                         (gortisan run and make:model do it for you)
 
-  gortisan make:<kind> <name> [flags]   add code to the project:
-    handler <group>/<action>            internal/handler/<group>_<action>.go
-    service <name>                      internal/service/<name>_service.go
-    model <name>                        model, repository and migration (postgres)
-        --fields "user_id:int64,status:string"   optional; columns to write in
-        --table <name>                  (default: plural of <name>)
+  gortisan make:<kind> <name> [flags]   add code to the project. Code about one
+                                        subject lives in internal/<feature>:
+    model <feature>                     <feature>.go (struct), repository.go, migration (postgres)
+        --fields "mobile:string,name:string"   optional; or add db-tagged fields later
+        --table <name>                  (default: plural of <feature>)
         --soft-delete                   add deleted_at
-    migration <name>                    empty migrations/<time>_<name>.{up,down}.sql
-    middleware <name>                   internal/middleware/<name>.go
-    request [<group>/]<name>            internal/request/<name>.go
-    response [<group>/]<name>           internal/response/<name>.go
-    validator [<group>/]<name>          internal/validator/<name>.go (a validate.Rule)
-    enum <name> --members <list>        internal/enum/<name>.go
+    service <feature>                   service.go
+    handler <feature>/<action>          a method in handler.go, its input in request.go
+                                        and its output in response.go
+    request <feature>/<name>            a type in request.go
+    response <feature>/<name>           a type in response.go
+    validator <feature>/<name>          a validate.Rule in validator.go
+    enum <feature>/<name> --members <list>   <name>.go, e.g. user/status
         --members "pending,paid=5,sent" integers count up from 1 or the previous value
         --type <type>                   string or an integer type (default: int64)
-    cache <name> [--type <type>]        internal/cache/<name>.go, a Redis cache (redis)
-    client <name>                       internal/client/<name>/client.go, an HTTP client
-    worker <name>                       internal/worker/<name>.go and cmd/worker (kafka)
-        --topic <topic>  --group <group>  (default: <name>)
-    cdc <model> [--topic <topic>]       internal/cdc/<model>.go, change events (kafka)
+    cache <feature>/<name> [--type T]   a typed Redis cache in cache.go (redis)
+    worker <feature>/<name>             a Kafka consumer in worker.go, and cmd/worker (kafka)
+        --topic <topic>  --group <group>
+    cdc <feature> [--topic <topic>]     cdc.go, change events of the model (kafka)
+    middleware <name>                   internal/middleware/<name>.go
+    client <name>                       internal/<name>/client.go, an HTTP client
+    migration <name>                    empty migrations/<time>_<name>.{up,down}.sql
 
-  make flags: --force overwrites existing files. "make handler" (with a space)
-  works too. Inside a project, ./gortisan runs the version that created it.
+  Files that collect several declarations (handler.go, request.go, ...) are
+  appended to; a name that already exists is left alone. --force overwrites
+  whole files that make writes. "make handler" (with a space) works too.
+  Inside a project, ./gortisan runs the version that created it.
 
   gortisan list | help | version
 `)

@@ -1,4 +1,4 @@
-package validator
+package {{.Pkg}}
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 // {{.Type}} is a validation rule: it implements validate.Rule. Give it the
 // values and dependencies it checks, then use it in a request's Validate:
 //
-//	if err := errs.Check(ctx, "field", validator.New{{.Type}}(...)); err != nil {
+//	if err := errs.Check(ctx, "field", New{{.Type}}(...)); err != nil {
 //		return err
 //	}
 type {{.Type}} struct {

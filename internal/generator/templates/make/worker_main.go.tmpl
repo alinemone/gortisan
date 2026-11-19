@@ -14,10 +14,10 @@ import (
 	"syscall"
 
 	"{{.Module}}/internal/config"
-	"{{.Module}}/internal/worker"
+	"{{.Module}}/internal/{{.Pkg}}"
 )
 
-const usage = "usage: worker <name>; workers: {{.Name}}"
+const usage = "usage: worker <name>; workers: {{.Pkg}}.{{.Name}}"
 
 func main() {
 	if err := run(); err != nil {
@@ -42,8 +42,8 @@ func run() error {
 
 	// Build only the worker that runs: a Kafka reader joins its group when created.
 	switch name := os.Args[1]; name {
-	case "{{.Name}}":
-		return worker.New{{.Type}}(cfg.Kafka, logger).Run(ctx)
+	case "{{.Pkg}}.{{.Name}}":
+		return {{.Pkg}}.New{{.Type}}Worker(cfg.Kafka, logger).Run(ctx)
 	default:
 		return fmt.Errorf("unknown worker %q; %s", name, usage)
 	}

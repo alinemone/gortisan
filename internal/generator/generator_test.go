@@ -97,35 +97,37 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 				opts       MakeOptions
 			}
 			steps := []step{
-				{kind: "handler", name: "order/get_order"},
-				{kind: "handler", name: "user/list"},
 				{kind: "service", name: "order"},
-				{kind: "middleware", name: "request_id"},
-				{kind: "request", name: "order/create_order"},
-				{kind: "request", name: "ping"},
-				{kind: "response", name: "order/order_detail"},
+				{kind: "handler", name: "order/list"},
+				{kind: "handler", name: "order/get"},
+				{kind: "handler", name: "user/list"}, // a feature with only a handler
+				{kind: "request", name: "order/create"},
+				{kind: "response", name: "order/detail"},
 				{kind: "validator", name: "order/not_paid"},
-				{kind: "enum", name: "order_status", opts: MakeOptions{Members: "pending,paid=5,sent"}},
-				{kind: "enum", name: "currency", opts: MakeOptions{Type: "string", Members: "irr,usd=USD"}},
+				{kind: "enum", name: "order/status", opts: MakeOptions{Members: "pending,paid=5,sent"}},
+				{kind: "enum", name: "order/currency", opts: MakeOptions{Type: "string", Members: "irr,usd=USD"}},
+				{kind: "middleware", name: "request_id"},
 				{kind: "client", name: "salam-pay"},
 			}
 			if has("postgres") {
 				steps = append(steps,
 					step{kind: "model", name: "order", opts: MakeOptions{Fields: "user_id:int64,status:string,paid_at:time?,meta:json", SoftDelete: true}},
 					step{kind: "model", name: "tag"},
+					step{kind: "service", name: "tag"}, // after the model: wired to the repository
+					step{kind: "handler", name: "tag/list"},
 					step{kind: "migration", name: "add_index"},
 				)
 			}
 			if has("redis") {
-				steps = append(steps, step{kind: "cache", name: "vendor_order_count", opts: MakeOptions{Type: "int64"}})
+				steps = append(steps, step{kind: "cache", name: "order/count", opts: MakeOptions{Type: "int64"}})
 				if has("postgres") {
-					steps = append(steps, step{kind: "cache", name: "order", opts: MakeOptions{Type: "*model.Order"}})
+					steps = append(steps, step{kind: "cache", name: "order/detail", opts: MakeOptions{Type: "*Order"}})
 				}
 			}
 			if has("kafka") {
 				steps = append(steps,
-					step{kind: "worker", name: "send_notifications", opts: MakeOptions{Group: "notification_worker"}},
-					step{kind: "worker", name: "order_paid", opts: MakeOptions{Topic: "orders.paid"}},
+					step{kind: "worker", name: "order/send_notifications", opts: MakeOptions{Group: "notification_worker"}},
+					step{kind: "worker", name: "order/paid", opts: MakeOptions{Topic: "orders.paid"}},
 				)
 				if has("postgres") {
 					steps = append(steps, step{kind: "cdc", name: "order"}, step{kind: "cdc", name: "tag"})
@@ -142,7 +144,7 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 			missing := map[string]string{"model": "postgres", "cache": "redis", "worker": "kafka", "cdc": "kafka"}
 			for kind, component := range missing {
 				if !has(component) {
-					if _, err := Make(project, kind, "order", MakeOptions{}); err == nil {
+					if _, err := Make(project, kind, "order/x", MakeOptions{}); err == nil {
 						t.Errorf("make %s without %s: want an error", kind, component)
 					}
 				}
@@ -192,8 +194,8 @@ func TestMakeKeepsExistingFiles(t *testing.T) {
 	if _, err := Make(project, "service", "order", MakeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "internal", "service", "order_service.go")
-	if err := os.WriteFile(path, []byte("package service // edited\n"), 0o644); err != nil {
+	path := filepath.Join(root, "internal", "order", "service.go")
+	if err := os.WriteFile(path, []byte("package order // edited\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	report, err := Make(project, "service", "order", MakeOptions{})
@@ -268,20 +270,52 @@ func TestParseMembers(t *testing.T) {
 	}
 }
 
-func TestSplitName(t *testing.T) {
-	cases := map[string][2]string{
-		"order/create_order": {"create_order", "CreateOrder"},
-		"user/list":          {"user_list", "UserList"},
-		"ping":               {"ping", "Ping"},
+func TestSplitFeature(t *testing.T) {
+	f, item, err := splitFeature("handler", "order_item/list_all")
+	if err != nil || f.Pkg != "orderitem" || f.Dir != "internal/orderitem" || f.Type != "OrderItem" || item != "list_all" {
+		t.Fatalf("got %+v %q %v", f, item, err)
 	}
-	for in, want := range cases {
-		file, typeName, err := splitName("request", in)
-		if err != nil || file != want[0] || typeName != want[1] {
-			t.Errorf("splitName(%q) = %q, %q, %v; want %q, %q", in, file, typeName, err, want[0], want[1])
+	for _, bad := range []string{"list", "a/b/c", "config/list", "user/1x"} {
+		if _, _, err := splitFeature("handler", bad); err == nil {
+			t.Errorf("splitFeature(%q): want an error", bad)
 		}
 	}
-	if _, _, err := splitName("request", "a/b/c"); err == nil {
-		t.Error("want an error for a/b/c")
+}
+
+func TestHandlerAppendsToFeatureFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/x\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := FindProject(root)
+	for _, name := range []string{"user/list", "user/get"} {
+		if _, err := Make(p, "handler", name, MakeOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(name string) string {
+		b, _ := os.ReadFile(filepath.Join(root, "internal", "user", name))
+		return string(b)
+	}
+	for file, wants := range map[string][]string{
+		"handler.go":  {"type Handler struct", "func (h *Handler) List(", "func (h *Handler) Get("},
+		"request.go":  {"type ListRequest struct", "type GetRequest struct"},
+		"response.go": {"type ListResponse struct", "type GetResponse struct"},
+	} {
+		for _, want := range wants {
+			if !strings.Contains(read(file), want) {
+				t.Errorf("%s lacks %q:\n%s", file, want, read(file))
+			}
+		}
+	}
+	// Making the same handler again changes nothing and says so.
+	before := read("handler.go")
+	report, err := Make(p, "handler", "user/list", MakeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read("handler.go") != before || len(report.Skipped) != 3 {
+		t.Fatalf("second make:handler user/list changed files or did not report them: %+v", report)
 	}
 }
 

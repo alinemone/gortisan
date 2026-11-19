@@ -1,4 +1,4 @@
-package worker
+package {{.Pkg}}
 
 import (
 	"context"
@@ -21,18 +21,19 @@ const (
 // {{.Type}}Message is the JSON value of a message on {{.Topic}}.
 type {{.Type}}Message struct{}
 
-// {{.Type}} consumes {{.Topic}} in group {{.Group}}. Add what handle needs
-// (services, repositories) as fields and pass them to New{{.Type}}.
-type {{.Type}} struct {
+// {{.Type}}Worker consumes {{.Topic}} in group {{.Group}}. Add what handle
+// needs (the Service, other clients) as fields and pass them to
+// New{{.Type}}Worker.
+type {{.Type}}Worker struct {
 	reader *kafkago.Reader
 	logger *slog.Logger
 }
 
-// New{{.Type}} joins the consumer group right away; build it only to Run it.
-func New{{.Type}}(cfg config.Kafka, logger *slog.Logger) *{{.Type}} {
-	return &{{.Type}}{
+// New{{.Type}}Worker joins the consumer group right away; build it only to Run it.
+func New{{.Type}}Worker(cfg config.Kafka, logger *slog.Logger) *{{.Type}}Worker {
+	return &{{.Type}}Worker{
 		reader: kafka.NewReader(cfg, {{.Type}}Topic, {{.Type}}Group),
-		logger: logger.With("worker", "{{.Name}}"),
+		logger: logger.With("worker", "{{.Pkg}}.{{.Name}}"),
 	}
 }
 
@@ -40,7 +41,7 @@ func New{{.Type}}(cfg config.Kafka, logger *slog.Logger) *{{.Type}} {
 // is handled; one that fails is logged and committed too, so a bad message
 // cannot block the partition. Change that here if you need retries or a
 // dead-letter topic.
-func (w *{{.Type}}) Run(ctx context.Context) error {
+func (w *{{.Type}}Worker) Run(ctx context.Context) error {
 	defer w.reader.Close()
 	for {
 		msg, err := w.reader.FetchMessage(ctx)
@@ -48,7 +49,7 @@ func (w *{{.Type}}) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			return fmt.Errorf("worker {{.Name}}: fetch: %w", err)
+			return fmt.Errorf("worker {{.Pkg}}.{{.Name}}: fetch: %w", err)
 		}
 		if err := w.handle(ctx, msg); err != nil {
 			w.logger.Error("message failed", "partition", msg.Partition, "offset", msg.Offset, "error", err.Error())
@@ -57,12 +58,12 @@ func (w *{{.Type}}) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			return fmt.Errorf("worker {{.Name}}: commit: %w", err)
+			return fmt.Errorf("worker {{.Pkg}}.{{.Name}}: commit: %w", err)
 		}
 	}
 }
 
-func (w *{{.Type}}) handle(ctx context.Context, msg kafkago.Message) error {
+func (w *{{.Type}}Worker) handle(ctx context.Context, msg kafkago.Message) error {
 	var value {{.Type}}Message
 	if err := json.Unmarshal(msg.Value, &value); err != nil {
 		return fmt.Errorf("decode: %w", err)

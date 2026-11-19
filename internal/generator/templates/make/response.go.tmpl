@@ -1,5 +1,5 @@
-package response
+package {{.Pkg}}
 
-// {{.Type}} is the output of an endpoint, written with c.JSON. Build it from
-// models in the handler, so the API does not change when a table does.
-type {{.Type}} struct{}
+// {{.Action}}Response is an output, written with c.JSON. Build it from the
+// models here, so a table change does not change the API by accident.
+type {{.Action}}Response struct{}

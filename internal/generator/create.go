@@ -84,7 +84,7 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		{"internal/server/server.go", "create/server.go.tmpl"},
 		{"internal/server/server_test.go", "create/server_test.go.tmpl"},
 		{"internal/router/router.go", "create/router.go.tmpl"},
-		{"internal/handler/health.go", "create/health.go.tmpl"},
+		{"internal/health/health.go", "create/health.go.tmpl"},
 		{"internal/validate/validate.go", "create/validate.go.tmpl"},
 		{"internal/validate/validate_test.go", "create/validate_test.go.tmpl"},
 		{".env.example", "create/env.example.tmpl"},
@@ -130,7 +130,7 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 	}
 	report.next("cd %s && cp .env.example .env", name)
 	report.next("go run ./cmd/%s   # serves on PORT (8080): /ping, /health", name)
-	report.next("./gortisan make:handler order/get_order   # gortisan.bat / gortisan.ps1 on Windows")
+	report.next("./gortisan make:model user, then make:service user and make:handler user/list   # gortisan.bat / gortisan.ps1 on Windows")
 	return report, nil
 }
 
