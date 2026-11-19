@@ -21,7 +21,7 @@ var errDeclExists = errors.New("already declared")
 // package — to the end of existing, and adds the imports existing lacks.
 // Nothing already in existing is changed. It fails with errDeclExists when a
 // type, function, method, constant or variable of fragment already exists.
-func appendGo(existing, fragment []byte) ([]byte, error) {
+func appendGo(existing, fragment []byte, module string) ([]byte, error) {
 	efset, ffset := token.NewFileSet(), token.NewFileSet()
 	ef, err := parser.ParseFile(efset, "existing.go", existing, parser.ParseComments)
 	if err != nil {
@@ -51,7 +51,7 @@ func appendGo(existing, fragment []byte) ([]byte, error) {
 	}
 	body := fragment[ffset.File(ff.Pos()).Offset(bodyStart):]
 
-	src, err := addImports(existing, ef, efset, importsOf(ff))
+	src, err := addImports(existing, ef, efset, importsOf(ff), module)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func appendGo(existing, fragment []byte) ([]byte, error) {
 }
 
 // addImports returns src with the given imports added where missing.
-func addImports(src []byte, file *ast.File, fset *token.FileSet, imports []string) ([]byte, error) {
+func addImports(src []byte, file *ast.File, fset *token.FileSet, imports []string, module string) ([]byte, error) {
 	present := importsOf(file)
 	var missing []string
 	for _, spec := range imports {
@@ -77,7 +77,7 @@ func addImports(src []byte, file *ast.File, fset *token.FileSet, imports []strin
 	// last, as goimports would place them.
 	var std, other []string
 	for _, spec := range missing {
-		if isStdImport(spec) {
+		if isStdImport(spec, module) {
 			std = append(std, spec)
 		} else {
 			other = append(other, spec)
@@ -99,7 +99,17 @@ func addImports(src []byte, file *ast.File, fset *token.FileSet, imports []strin
 			continue
 		}
 		if !gen.Lparen.IsValid() {
-			return splice(src, offset(gen.End()), block(std, other)), nil
+			// A single `import "x"`: rewrite it as one grouped block with the new ones.
+			existing := string(src[offset(gen.Specs[0].Pos()):offset(gen.End())])
+			if isStdImport(existing, module) {
+				std = append([]string{existing}, std...)
+			} else {
+				other = append([]string{existing}, other...)
+			}
+			start, end := offset(gen.Pos()), offset(gen.End())
+			out := append([]byte{}, src[:start]...)
+			out = append(out, strings.TrimPrefix(block(std, other), "\n\n")...)
+			return append(out, src[end:]...), nil
 		}
 		// Insert the later position first so the earlier offset stays valid.
 		out := src
@@ -115,10 +125,14 @@ func addImports(src []byte, file *ast.File, fset *token.FileSet, imports []strin
 }
 
 // isStdImport reports whether an import spec names a standard library
-// package: its path's first element has no dot.
-func isStdImport(spec string) bool {
-	path := spec[strings.Index(spec, `"`):]
-	first, _, _ := strings.Cut(strings.Trim(path, `"`), "/")
+// package: its path's first element has no dot, and it is not inside the
+// project's own module (which may have no dot either, e.g. "shop").
+func isStdImport(spec, module string) bool {
+	path := strings.Trim(spec[strings.Index(spec, `"`):], `"`)
+	if module != "" && (path == module || strings.HasPrefix(path, module+"/")) {
+		return false
+	}
+	first, _, _ := strings.Cut(path, "/")
 	return !strings.Contains(first, ".")
 }
 
@@ -204,7 +218,7 @@ func writeOrAppend(p *Project, rel, tmpl string, data any, report *Report) error
 	if err != nil {
 		return err
 	}
-	merged, err := appendGo(existing, content)
+	merged, err := appendGo(existing, content, p.Module)
 	if errors.Is(err, errDeclExists) {
 		report.Skipped = append(report.Skipped, rel+" ("+strings.TrimSuffix(err.Error(), ": "+errDeclExists.Error())+" already exists)")
 		return nil

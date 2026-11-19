@@ -81,7 +81,7 @@ func layer(path string) string {
 	return first
 }
 
-// apiVersion returns "v1" for "api/v1/userapi/handler.go".
+// apiVersion returns "v1" for "api/v1/users/handler.go".
 func apiVersion(path string) string {
 	parts := strings.Split(path, "/")
 	if len(parts) > 1 && strings.HasPrefix(parts[1], "v") {
@@ -112,11 +112,11 @@ func modulePath(t *testing.T) string {
 func TestViolation(t *testing.T) {
 	cases := map[[2]string]bool{
 		{"domain/user/service.go", "platform/database"}: false,
-		{"api/v1/userapi/handler.go", "domain/user"}:     false,
-		{"api/v2/userapi/handler.go", "api/v1/userapi"}:  true,
-		{"api/v1/routes.go", "api/v1/userapi"}:           false,
+		{"api/v1/users/handler.go", "domain/user"}:     false,
+		{"api/v2/users/handler.go", "api/v1/users"}:  true,
+		{"api/v1/routes.go", "api/v1/users"}:           false,
 		{"api/router.go", "api/v2"}:                      false,
-		{"domain/user/service.go", "api/v1/userapi"}:     true,
+		{"domain/user/service.go", "api/v1/users"}:     true,
 		{"platform/cdc/cdc.go", "domain/user"}:           true,
 		{"worker/userworker/worker.go", "api/v1"}:        true,
 	}

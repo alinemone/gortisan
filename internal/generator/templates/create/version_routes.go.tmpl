@@ -1,6 +1,6 @@
 // Package {{.Version}} is version {{.Version}} of the HTTP API: its routes, and one
-// package per subject (userapi, orderapi, ...) with the handlers, requests
-// and responses of this version.
+// package per resource, named like its URL (users for /{{.Version}}/users, ...),
+// with the handlers, requests and responses of this version.
 package {{.Version}}
 
 import (
@@ -16,9 +16,9 @@ type Services struct{}
 // Register adds every {{.Version}} route to g (mounted at /{{.Version}}). This
 // file is the full list of the version's endpoints, e.g.
 //
-//	users := userapi.NewHandler(s.User)
-//	g.GET("/users", users.List)
-//	g.GET("/users/:id", users.Get)
+//	userHandler := users.NewHandler(s.User)
+//	g.GET("/users", userHandler.List)
+//	g.GET("/users/:id", userHandler.Get)
 func Register(g *echo.Group, s Services) {
 
 }

@@ -36,7 +36,7 @@ internal/
   api/                    HTTP
     router.go             /ping, /health{{if .Metrics}}, /metrics{{end}}, and one line per API version
     v1/routes.go          every v1 endpoint
-    v1/userapi/           handler.go, request.go (inputs), response.go (outputs)
+    v1/users/           handler.go, request.go (inputs), response.go (outputs)
 {{- if .Kafka}}
   worker/                 Kafka consumers
 {{- end}}
@@ -99,7 +99,7 @@ no code imports it and `go.mod` does not list it.
 ./gortisan make:model sales/order                 # a grouped subject
 {{- end}}
 ./gortisan make:service user                      # internal/domain/user/service.go
-./gortisan make:handler v1/user/list              # internal/api/v1/userapi: handler + ListRequest + ListResponse
+./gortisan make:handler v1/user/list              # internal/api/v1/users: handler + ListRequest + ListResponse
 ./gortisan make:handler v2/user/list              # a second API version
 ./gortisan make:enum user/status --members "active,blocked"
 ./gortisan make:validator user/mobile_free

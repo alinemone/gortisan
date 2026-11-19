@@ -87,8 +87,8 @@ shop/
 │   │   ├── middleware/
 │   │   ├── v1/
 │   │   │   ├── routes.go         every v1 endpoint, in one file
-│   │   │   ├── userapi/          handler.go  request.go  response.go
-│   │   │   └── sales/orderapi/
+│   │   │   ├── users/          handler.go  request.go  response.go
+│   │   │   └── sales/orders/
 │   │   └── v2/                   only what changed in v2
 │   ├── worker/                   Kafka — another entry point into the domain   (kafka)
 │   │   └── userworker/
@@ -102,6 +102,11 @@ shop/
 ├── gortisan, gortisan.bat, gortisan.ps1
 └── go.mod                        echo, pgx, go-redis, kafka-go, prometheus — only what you picked
 ```
+
+**Naming.** The domain package is singular — `user`, holding `user.User` and
+`user.Service`. The HTTP package is named like its URL — `/v1/users` lives in
+`internal/api/v1/users`, holding `users.Handler` and `users.ListRequest`. The two
+never clash, so no import needs an alias.
 
 **Why this shape.** It follows the Go team's
 [server layout](https://go.dev/doc/modules/layout#server-project) (commands in
@@ -138,9 +143,9 @@ Nothing already in the file changes; a name that already exists is left alone.
 |---|---|
 | `app/Models/User.php` | `internal/domain/user/user.go` |
 | a service class | `internal/domain/user/service.go` |
-| `app/Http/Controllers/Api/V1/UserController.php` | `internal/api/v1/userapi/handler.go` |
-| `app/Http/Requests/…Request.php` | `internal/api/v1/userapi/request.go` |
-| `app/Http/Resources/UserResource.php` | `internal/api/v1/userapi/response.go` |
+| `app/Http/Controllers/Api/V1/UserController.php` | `internal/api/v1/users/handler.go` |
+| `app/Http/Requests/…Request.php` | `internal/api/v1/users/request.go` |
+| `app/Http/Resources/UserResource.php` | `internal/api/v1/users/response.go` |
 | `routes/api.php` | `internal/api/v1/routes.go` |
 | `app/Http/Middleware` | `internal/api/middleware/` |
 | `app/Jobs`, queue workers | `internal/worker/`, `cmd/worker` |
@@ -175,7 +180,7 @@ the same code, nobody needs gortisan installed, and `go.mod` stays untouched.
 | `generate` | writes the table mapping of every `//gortisan:table` struct into its `repository.go`; `--check` fails if one is out of date (for CI) |
 | `make:model <subject>` | `user.go`, `errors.go`, `store.go`, `repository.go` in `internal/domain/<subject>`, and a create-table migration *(postgres)* |
 | `make:service <subject>` | `service.go`, built on the `Store` when there is one |
-| `make:handler <version>/<subject>/<action>` | a method in `internal/api/<version>/<subject>api/handler.go`, its input in `request.go`, its output in `response.go`; a new version gets its `routes.go` |
+| `make:handler <version>/<subject>/<action>` | a method in `internal/api/<version>/<resources>/handler.go`, its input in `request.go`, its output in `response.go`; a new version gets its `routes.go` |
 | `make:request <version>/<subject>/<name>` | a type with `Validate` in `request.go` |
 | `make:response <version>/<subject>/<name>` | a type in `response.go` |
 | `make:validator <subject>/<name>` | a reusable rule (`validate.Rule`) in the domain's `validator.go` |
@@ -229,12 +234,12 @@ type Services struct {
 }
 
 func Register(g *echo.Group, s Services) {
-	users := userapi.NewHandler(s.User)
-	g.GET("/users", users.List)
-	g.GET("/users/:id", users.Get)
+	userHandler := users.NewHandler(s.User)
+	g.GET("/users", userHandler.List)
+	g.GET("/users/:id", userHandler.Get)
 
-	orders := orderapi.NewHandler(s.Order)
-	g.GET("/orders", orders.List)
+	orderHandler := orders.NewHandler(s.Order)
+	g.GET("/orders", orderHandler.List)
 }
 ```
 
@@ -335,7 +340,7 @@ A request collects every problem and returns them together; what a check needs
 is passed in like anything else:
 
 ```go
-// internal/api/v1/userapi/request.go
+// internal/api/v1/users/request.go
 func (r *CreateRequest) Validate(ctx context.Context, users *user.Service) error {
 	var errs validate.Errors
 	if len(r.Mobile) != 11 {

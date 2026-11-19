@@ -159,12 +159,12 @@ func syncRepository(src []byte, specs []tableSpec) ([]byte, []string, error) {
 
 		if start, end, ok := findRegion(out, spec.Type); ok {
 			out = append(append(append([]byte{}, out[:start]...), region...), out[end:]...)
-			if out, err = ensureImports(out, fragment); err != nil {
+			if out, err = ensureImports(out, fragment, spec.Module); err != nil {
 				return nil, nil, err
 			}
 			continue
 		}
-		merged, err := appendGo(out, fragment)
+		merged, err := appendGo(out, fragment, spec.Module)
 		if errors.Is(err, errDeclExists) {
 			notes = append(notes, spec.Var+"Table is written by hand; delete it to let generate keep it in step with "+spec.Type)
 			continue
@@ -252,7 +252,7 @@ func regionTypes(src []byte) []string {
 }
 
 // ensureImports adds to src the imports of fragment it lacks.
-func ensureImports(src, fragment []byte) ([]byte, error) {
+func ensureImports(src, fragment []byte, module string) ([]byte, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "repository.go", src, parser.ImportsOnly)
 	if err != nil {
@@ -262,7 +262,7 @@ func ensureImports(src, fragment []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return addImports(src, file, fset, importsOf(frag))
+	return addImports(src, file, fset, importsOf(frag), module)
 }
 
 // readModels finds every struct marked //gortisan:table under internal/,

@@ -287,7 +287,7 @@ func TestSplitNames(t *testing.T) {
 	if err != nil || version != "v2" || f.Path != "sales/order" || item != "list" {
 		t.Fatalf("splitAPI: %q %+v %q %v", version, f, item, err)
 	}
-	if dir, pkg := apiPackage(version, f); dir != "internal/api/v2/sales/orderapi" || pkg != "orderapi" {
+	if dir, pkg := apiPackage(version, f); dir != "internal/api/v2/sales/orders" || pkg != "orders" {
 		t.Fatalf("apiPackage = %q %q", dir, pkg)
 	}
 	for _, bad := range []string{"user/list", "x1/user/list", "v1/list", "v1/user/1x", "v1/type/list"} {
@@ -320,7 +320,7 @@ func TestHandlerAppendsToFeatureFiles(t *testing.T) {
 		}
 	}
 	read := func(name string) string {
-		b, _ := os.ReadFile(filepath.Join(root, "internal", "api", "v1", "userapi", name))
+		b, _ := os.ReadFile(filepath.Join(root, "internal", "api", "v1", "users", name))
 		return string(b)
 	}
 	for file, wants := range map[string][]string{

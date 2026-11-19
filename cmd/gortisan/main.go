@@ -332,7 +332,7 @@ Usage:
 
   gortisan make:<kind> <name> [flags]   add code. A project has four layers:
         internal/domain/<subject>     the business (subjects can be grouped: sales/order)
-        internal/api/<version>/       HTTP, one package per subject: userapi, orderapi
+        internal/api/<version>/       HTTP, one package per resource, named like its URL: users, orders
         internal/worker/              Kafka consumers
         internal/platform/            infrastructure
 

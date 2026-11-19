@@ -111,7 +111,7 @@ var MakeKinds = []string{
 // A project has four layers under internal/:
 //
 //	domain/<subject>/      the business: model, errors, store, repository, service
-//	api/<version>/<x>api/  HTTP: handler, request, response, per API version
+//	api/<version>/<resources>/  HTTP (named like the URL, e.g. users): handler, request, response
 //	worker/<x>worker/      Kafka consumers
 //	platform/              infrastructure
 //
@@ -369,10 +369,12 @@ func makeService(p *Project, name string, opts MakeOptions, report *Report) erro
 	return nil
 }
 
-// apiPackage is where version's HTTP code for f lives:
-// internal/api/v1/userapi, or internal/api/v1/sales/orderapi.
+// apiPackage is where version's HTTP code for f lives, named like the URL:
+// internal/api/v1/users for /v1/users, internal/api/v1/sales/orders. The plural
+// also keeps it apart from the domain package (user), so neither needs an
+// import alias.
 func apiPackage(version string, f feature) (dir, pkg string) {
-	pkg = f.Pkg + "api"
+	pkg = strings.ReplaceAll(plural(f.Name), "_", "")
 	dir = "internal/api/" + version
 	if f.Parent != "" {
 		dir += "/" + f.Parent
@@ -401,7 +403,7 @@ func apiData(p *Project, version string, f feature, item string) data {
 	d.Action = pascal(item)
 	d.Route = "/" + plural(strings.ReplaceAll(f.Name, "_", "-"))
 	d.Method, d.Path = routeFor(d.Action, d.Route)
-	d.Var = camel(plural(f.Name))
+	d.Var = camel(f.Name) + "Handler"
 	d.HasService = p.exists(f.Dir() + "/service.go")
 	return d
 }
