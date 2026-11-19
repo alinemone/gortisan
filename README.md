@@ -37,12 +37,22 @@ The only libraries are echo, pgx and go-redis.
 
 ## Add files
 
+Like Laravel's and Goravel's `artisan`, every project gets a `./gortisan` script in
+its root (`gortisan.bat` and `gortisan.ps1` on Windows):
+
 ```bash
-gortisan make handler order/get_order      # internal/handler/order.go, order_get_order.go
-gortisan make service order                # internal/service/order_service.go
-gortisan make model order --fields "user_id:int64,status:string,paid_at:time?" --soft-delete
-gortisan make migration add_index_to_orders
+./gortisan list
+./gortisan make:handler order/get_order      # internal/handler/order.go, order_get_order.go
+./gortisan make:service order                # internal/service/order_service.go
+./gortisan make:model order --fields "user_id:int64,status:string,paid_at:time?" --soft-delete
+./gortisan make:migration add_index_to_orders
 ```
+
+Goravel's `artisan` is `go run . artisan`, so the project imports the framework.
+gortisan's script is `go run github.com/alinemone/gortisan/cmd/gortisan@<version>`
+instead: the version that created the project, run from the module cache, with
+nothing imported and nothing added to `go.mod`. The global `gortisan` binary takes
+the same commands, and `make handler` (with a space) works as well as `make:handler`.
 
 `make model` writes the struct, a repository with its `orm.Table` mapping, and
 `migrations/<time>_create_<table>_table.{up,down}.sql`. Field types: `string`,

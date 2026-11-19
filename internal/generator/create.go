@@ -21,7 +21,13 @@ type CreateOptions struct {
 	With string
 	// NoTidy skips `go mod tidy` after writing the files.
 	NoTidy bool
+	// Version is the gortisan version the project's ./gortisan scripts run;
+	// "latest" when empty.
+	Version string
 }
+
+// ToolPackage is what the project's ./gortisan scripts `go run`.
+const ToolPackage = "github.com/alinemone/gortisan/cmd/gortisan"
 
 type projectData struct {
 	Name     string
@@ -29,6 +35,7 @@ type projectData struct {
 	Title    string
 	Postgres bool
 	Redis    bool
+	Tool     string // ToolPackage@version
 }
 
 // Create writes a new project into dir/name.
@@ -59,6 +66,7 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		Title:    title(name),
 		Postgres: with["postgres"],
 		Redis:    with["redis"],
+		Tool:     ToolPackage + "@" + toolVersion(opts.Version),
 	}
 
 	outputs := []output{
@@ -74,6 +82,10 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		{"Dockerfile", "create/Dockerfile.tmpl"},
 		{"Makefile", "create/Makefile.tmpl"},
 		{"README.md", "create/README.md.tmpl"},
+		{".gitattributes", "create/gitattributes.tmpl"},
+		{"gortisan", "create/gortisan.sh.tmpl"},
+		{"gortisan.bat", "create/gortisan.bat.tmpl"},
+		{"gortisan.ps1", "create/gortisan.ps1.tmpl"},
 	}
 	if data.Postgres {
 		outputs = append(outputs,
@@ -91,6 +103,9 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 	if err := renderAll(root, outputs, data, false, report); err != nil {
 		return report, err
 	}
+	if err := os.Chmod(filepath.Join(root, "gortisan"), 0o755); err != nil {
+		return report, err
+	}
 
 	if opts.NoTidy {
 		report.next("cd %s && go mod tidy", name)
@@ -99,7 +114,17 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 	}
 	report.next("cd %s && cp .env.example .env", name)
 	report.next("go run ./cmd/%s   # serves on PORT (8080): /ping, /health", name)
+	report.next("./gortisan make:handler order/get_order   # gortisan.bat / gortisan.ps1 on Windows")
 	return report, nil
+}
+
+// toolVersion is the version to pin: a release or pseudo-version, never a
+// local "(devel)" build, which `go run` could not fetch.
+func toolVersion(v string) string {
+	if v == "" || v == "(devel)" || strings.HasSuffix(v, "+dirty") {
+		return "latest"
+	}
+	return v
 }
 
 func parseWith(value string) (map[string]bool, error) {

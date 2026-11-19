@@ -5,7 +5,10 @@
 //
 //	go install github.com/alinemone/gortisan/cmd/gortisan@latest
 //	gortisan create shop --module github.com/you/shop
-//	gortisan make handler order/get_order
+//	gortisan make:handler order/get_order   (or: make handler ...)
+//
+// Inside a project, the generated ./gortisan script (gortisan.bat,
+// gortisan.ps1 on Windows) runs the same version that created it.
 package main
 
 import (
@@ -27,6 +30,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		usage(stderr)
 		return 2
 	}
+	// make:handler is the artisan-style spelling of "make handler".
+	if kind, ok := strings.CutPrefix(args[0], "make:"); ok {
+		return runMake(append([]string{kind}, args[1:]...), stdout, stderr)
+	}
 	switch args[0] {
 	case "create", "new":
 		return runCreate(args[1:], stdout, stderr)
@@ -35,7 +42,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, version())
 		return 0
-	case "help", "--help", "-h":
+	case "help", "--help", "-h", "list":
 		usage(stdout)
 		return 0
 	default:
@@ -110,9 +117,10 @@ func runCreate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	report, err := generator.Create(cwd, f.positional[0], generator.CreateOptions{
-		Module: f.values["module"],
-		With:   f.values["with"],
-		NoTidy: f.bools["no-tidy"],
+		Module:  f.values["module"],
+		With:    f.values["with"],
+		NoTidy:  f.bools["no-tidy"],
+		Version: buildVersion(),
 	})
 	printReport(stdout, report)
 	if err != nil {
@@ -172,10 +180,16 @@ func printReport(w io.Writer, report *generator.Report) {
 }
 
 func version() string {
+	return "gortisan " + buildVersion()
+}
+
+// buildVersion is the module version this binary was built from: a tag or
+// pseudo-version after `go install ...@version`, "(devel)" for a local build.
+func buildVersion() string {
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
-		return "gortisan " + info.Main.Version
+		return info.Main.Version
 	}
-	return "gortisan (devel)"
+	return "(devel)"
 }
 
 func usage(w io.Writer) {
@@ -187,16 +201,17 @@ Usage:
       --with postgres,redis|all|none    pieces to include (default: all)
       --no-tidy                         skip "go mod tidy"
 
-  gortisan make handler <group>/<action>   internal/handler/<group>_<action>.go
-  gortisan make service <name>             internal/service/<name>_service.go
-  gortisan make model <name> [flags]       model, repository and migration
+  gortisan make:handler <group>/<action>   internal/handler/<group>_<action>.go
+  gortisan make:service <name>             internal/service/<name>_service.go
+  gortisan make:model <name> [flags]       model, repository and migration
       --fields "user_id:int64,status:string,paid_at:time?"
       --table <name>                    (default: plural of <name>)
       --soft-delete                     add deleted_at
-  gortisan make migration <name>           empty migrations/<time>_<name>.{up,down}.sql
+  gortisan make:migration <name>           empty migrations/<time>_<name>.{up,down}.sql
 
-  make flags: --force overwrites existing files.
+  make flags: --force overwrites existing files. "make handler" (with a space)
+  works too. Inside a project, ./gortisan runs the version that created it.
 
-  gortisan version
+  gortisan list | help | version
 `)
 }

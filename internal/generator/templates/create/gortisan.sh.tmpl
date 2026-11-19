@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Runs the gortisan version this project was created with. It is not a
+# dependency: nothing in the code imports it and go.mod does not list it.
+exec go run {{.Tool}} "$@"

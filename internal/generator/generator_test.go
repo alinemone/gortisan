@@ -162,6 +162,37 @@ func TestMakeKeepsExistingFiles(t *testing.T) {
 	}
 }
 
+func TestCreateWritesPinnedWrappers(t *testing.T) {
+	for version, want := range map[string]string{
+		"v0.2.0":   ToolPackage + "@v0.2.0",
+		"(devel)":  ToolPackage + "@latest",
+		"":         ToolPackage + "@latest",
+		"v1+dirty": ToolPackage + "@latest",
+	} {
+		dir := t.TempDir()
+		if _, err := Create(dir, "svc", CreateOptions{With: "none", NoTidy: true, Version: version}); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"gortisan", "gortisan.bat", "gortisan.ps1"} {
+			content, err := os.ReadFile(filepath.Join(dir, "svc", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(content), "go run "+want) {
+				t.Errorf("version %q: %s does not run %s:\n%s", version, name, want, content)
+			}
+		}
+		sh, _ := os.ReadFile(filepath.Join(dir, "svc", "gortisan"))
+		if strings.Contains(string(sh), "\r") || !strings.HasPrefix(string(sh), "#!/usr/bin/env sh\n") {
+			t.Errorf("the sh script must use LF line endings:\n%q", sh)
+		}
+		bat, _ := os.ReadFile(filepath.Join(dir, "svc", "gortisan.bat"))
+		if !strings.Contains(string(bat), "\r\n") {
+			t.Errorf("the bat script should use CRLF line endings:\n%q", bat)
+		}
+	}
+}
+
 func TestCreateRefusesNonEmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "svc"), 0o755); err != nil {
