@@ -85,8 +85,6 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		{"internal/platform/server/server.go", "create/server.go.tmpl"},
 		{"internal/platform/server/server_test.go", "create/server_test.go.tmpl"},
 		{"internal/platform/health/health.go", "create/health.go.tmpl"},
-		{"internal/platform/validate/validate.go", "create/validate.go.tmpl"},
-		{"internal/platform/validate/validate_test.go", "create/validate_test.go.tmpl"},
 		{".env.example", "create/env.example.tmpl"},
 		{".gitignore", "create/gitignore.tmpl"},
 		{"Dockerfile", "create/Dockerfile.tmpl"},
@@ -97,6 +95,7 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		{"gortisan.bat", "create/gortisan.bat.tmpl"},
 		{"gortisan.ps1", "create/gortisan.ps1.tmpl"},
 	}
+	outputs = append(outputs, validateOutputs...)
 	if data.Postgres {
 		outputs = append(outputs, componentOutputs("postgres")...)
 	}

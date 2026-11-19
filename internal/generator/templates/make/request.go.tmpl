@@ -11,11 +11,14 @@ import (
 type {{.Action}}Request struct{}
 
 // Validate checks the request after binding and returns a 422 listing every
-// invalid field, or nil.
+// invalid field, or nil. Messages are keys of lang/fa.json.
 func (r *{{.Action}}Request) Validate(ctx context.Context) error {
 	var errs validate.Errors
 	// if r.ID <= 0 {
-	// 	errs.Add("id", "must be positive")
+	// 	errs.Add("path.id", "general:field-required", "شناسه")
+	// }
+	// if err := errs.Check(ctx, address.NewMobile("body.mobile", r.Mobile)); err != nil {
+	// 	return err
 	// }
 	return errs.Err()
 }

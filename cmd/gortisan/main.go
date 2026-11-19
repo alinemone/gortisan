@@ -380,7 +380,8 @@ Usage:
                                         its input in request.go, its output in response.go
     request <version>/<subject>/<name>  a type in request.go
     response <version>/<subject>/<name> a type in response.go
-    validator <subject>/<name>          a validate.Rule in the domain's validator.go
+    validator [<group>/]<name>          internal/api/validator/<group>/<name>.go,
+                                        its message key added to lang/fa.json
     enum <subject>/<name> --members <list>   <name>.go in the domain, e.g. user/status
         --members "pending,paid=5,sent" integers count up from 1 or the previous value
         --type <type>                   string or an integer type (default: int64)

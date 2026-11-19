@@ -3,20 +3,35 @@ package {{.Pkg}}
 import (
 	"context"
 	"errors"
+
+	"{{.Module}}/internal/platform/validate"
 )
 
-// {{.Type}} is a validation rule: it implements validate.Rule. Give it the
-// values and dependencies it checks, then use it in a request's Validate:
+// {{.Type}} is a validator. It fails with the text of "{{.Value}}" in
+// lang/fa.json. Give it what the check needs, then stop at it:
 //
-//	if err := errs.Check(ctx, "field", New{{.Type}}(...)); err != nil {
+//	if err := {{.Pkg}}.New{{.Type}}("body.field", value).Validate(ctx); err != nil {
+//		return err
+//	}
+//
+// or report it with the other errors of a request:
+//
+//	if err := errs.Check(ctx, {{.Pkg}}.New{{.Type}}("body.field", value)); err != nil {
 //		return err
 //	}
 type {{.Type}} struct {
-	message string
+	validate.Base
+	value string
 }
 
-func New{{.Type}}() *{{.Type}} {
-	return &{{.Type}}{message: "{{.Message}}"}
+// New{{.Type}} checks value, found at location ("body.mobile", "query.page",
+// "path.id"). Set Base.Status to fail with another status than 422, e.g.
+// http.StatusNotFound.
+func New{{.Type}}(location, value string) *{{.Type}} {
+	return &{{.Type}}{
+		Base:  validate.Base{Location: location, Code: "{{.Value}}"},
+		value: value,
+	}
 }
 
 // Passes reports whether the value is valid. Return an error only when the
@@ -25,6 +40,10 @@ func (v *{{.Type}}) Passes(ctx context.Context) (bool, error) {
 	return false, errors.New("validator {{.Type}}: Passes is not implemented")
 }
 
-func (v *{{.Type}}) Message() string {
-	return v.message
+// Validate stops at this check: nil when it passes, otherwise its error.
+// The message is the text of Code; to put arguments in it, define
+//
+//	func (v *{{.Type}}) Message() string { return trans.T(v.Code, ...) }
+func (v *{{.Type}}) Validate(ctx context.Context) error {
+	return validate.Run(ctx, v)
 }

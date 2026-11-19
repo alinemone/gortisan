@@ -33,7 +33,7 @@ internal/
     v1/users/           handler.go, request.go (inputs), response.go (outputs)
 
   platform/               infrastructure — no business rules
-    config/ server/ validate/ health/
+    config/ server/ validate/ problem/ trans/ health/
 {{- if .Postgres}}
     database/             opens the database from the config
     database/orm/         bun over pgx: Repository[T], scopes, relations, transactions
@@ -60,8 +60,11 @@ and `internal/arch_test.go` enforces it, including that `api/v2` never imports
   `cmd/api/main.go` wires them. No globals, no values hidden in `context.Context`.
 - **The domain names its errors** (`user.ErrNotFound`); the handler decides the
   HTTP status. Any other error becomes a 500 and is logged.
-- **Validation returns every error at once.** `var errs validate.Errors`, then
-  `errs.Add(...)` / `errs.Check(ctx, field, rule)`, then `return errs.Err()`.
+- **Validation:** a validator in `internal/api/validator/<group>/` (make:validator)
+  either stops the request (`address.NewMobile("body.mobile", m).Validate(ctx)`) or
+  joins the others (`errs.Check(ctx, ...)`, `errs.Add(...)`, `return errs.Err()`).
+- **Errors are RFC 9457 problem details** (`application/problem+json`), and every
+  text is a key of `lang/fa.json`: `trans.T("general:entity-not-found", "سفارش")`.
 {{- if .Postgres}}
 - **Transactions are explicit.** `orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error { ... })`
   and `repo.WithTx(tx)`.
@@ -114,7 +117,7 @@ no code imports it and `go.mod` does not list it.
 ./gortisan make:handler v1/user/list              # internal/api/v1/users: handler + ListRequest + ListResponse
 ./gortisan make:handler v2/user/list              # a second API version
 ./gortisan make:enum user/status --members "active,blocked"
-./gortisan make:validator user/mobile_free
+./gortisan make:validator address/mobile
 ./gortisan make:middleware request_id
 ./gortisan make:client payment
 {{- if .Postgres}}

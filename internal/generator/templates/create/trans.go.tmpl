@@ -1,0 +1,52 @@
+// Package trans returns the texts of lang/fa.json:
+//
+//	trans.T("general:entity-not-found", "سفارش") // "سفارش مورد نظر یافت نشد."
+package trans
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"{{.Module}}/lang"
+)
+
+// file is the language file T reads.
+const file = "fa.json"
+
+// phrases is read once, when the program starts, and never changed.
+var phrases = load()
+
+func load() map[string]string {
+	data, err := lang.Files.ReadFile(file)
+	if err != nil {
+		panic(fmt.Sprintf("trans: lang/%s: %v", file, err))
+	}
+	var m map[string]string
+	if err := json.Unmarshal(data, &m); err != nil {
+		panic(fmt.Sprintf("trans: lang/%s: %v", file, err))
+	}
+	return m
+}
+
+// T returns the text of key with args put in its %s, in order. A key that is
+// not in the language file is returned as it is.
+func T(key string, args ...any) string {
+	text, ok := phrases[key]
+	if !ok {
+		return key
+	}
+	if len(args) == 0 {
+		return text
+	}
+	strs := make([]any, len(args))
+	for i, arg := range args {
+		strs[i] = fmt.Sprint(arg) // %s works for numbers too
+	}
+	return fmt.Sprintf(text, strs...)
+}
+
+// Has reports whether key is in the language file.
+func Has(key string) bool {
+	_, ok := phrases[key]
+	return ok
+}

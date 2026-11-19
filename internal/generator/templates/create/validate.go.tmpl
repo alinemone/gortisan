@@ -1,72 +1,109 @@
-// Package validate collects field errors and turns them into one 422.
+// Package validate checks requests. A validator is a small type that embeds
+// Base and has a Passes method (gortisan make:validator writes one). Use it
+// in one of two ways:
 //
+//	// Stop at the first failure, with the validator's own status:
+//	if err := address.NewMobile("body.mobile", r.Mobile).Validate(ctx); err != nil {
+//		return err
+//	}
+//
+//	// Or report every invalid field together, as one 422:
 //	var errs validate.Errors
 //	if r.Quantity <= 0 {
-//		errs.Add("quantity", "must be positive")
+//		errs.Add("body.quantity", "general:min", "تعداد", 1)
 //	}
-//	if err := errs.Check(ctx, "order_id", validator.NewOrderNotPaid(orders, r.OrderID)); err != nil {
-//		return err // the rule itself failed, e.g. the database is down
+//	if err := errs.Check(ctx, address.NewMobile("body.mobile", r.Mobile)); err != nil {
+//		return err // the check itself failed, e.g. the database is down
 //	}
-//	return errs.Err() // nil, or 422 {"message": "...", "errors": [{"field": ..., "message": ...}]}
+//	return errs.Err()
+//
+// A failure is written as RFC 9457 problem details (internal/platform/problem).
 package validate
 
 import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
+
+	"{{.Module}}/internal/platform/problem"
+	"{{.Module}}/internal/platform/trans"
 )
 
-// Rule is one named check, such as those written by `gortisan make:validator`.
-type Rule interface {
+// Base is embedded in every validator: where its error points, its message
+// and its status.
+type Base struct {
+	// Location is where the value came from: "body.mobile",
+	// "body.items.0.quantity", "query.page", "path.id" or "header.X-Shop".
+	// A location without one of these prefixes is a body field.
+	Location string
+	// Code is the key of the message in lang/fa.json, e.g.
+	// "address:invalid-mobile". Clients receive it to match on.
+	Code string
+	// Status is the status Validate fails with; 0 means 422.
+	Status int
+}
+
+// Message is the text of Code. Define Message on the validator itself to put
+// arguments in, e.g. trans.T(v.Code, "تعداد", v.min).
+func (b Base) Message() string { return trans.T(b.Code) }
+
+func (b Base) base() Base { return b }
+
+// Validator is a check that embeds Base.
+type Validator interface {
 	// Passes reports whether the value is valid. An error means the check
 	// could not run, not that the value is invalid.
 	Passes(ctx context.Context) (bool, error)
 	// Message explains a failure to the client.
 	Message() string
+	base() Base
 }
 
-// FieldError is one invalid field.
-type FieldError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
+// Run checks v: nil when it passes, an *Error with v's status when it does
+// not, or the error that kept the check from running.
+func Run(ctx context.Context, v Validator) error {
+	ok, err := v.Passes(ctx)
+	if err != nil || ok {
+		return err
+	}
+	b := v.base()
+	return &Error{Status: b.Status, Fields: []problem.Error{field(b.Location, b.Code, v.Message())}}
 }
 
-// Body is the JSON body of a validation failure.
-type Body struct {
-	Message string       `json:"message"`
-	Errors  []FieldError `json:"errors"`
-}
-
-// Errors collects field errors. The zero value is ready to use.
+// Errors collects invalid fields to report them together. The zero value is
+// ready to use.
 type Errors struct {
-	fields []FieldError
+	fields []problem.Error
 }
 
-// Add records that field is invalid.
-func (e *Errors) Add(field, message string) {
-	e.fields = append(e.fields, FieldError{Field: field, Message: message})
+// Add records that the value at location is invalid, with the text of code
+// in lang/fa.json and args put in its %s.
+func (e *Errors) Add(location, code string, args ...any) {
+	e.fields = append(e.fields, field(location, code, trans.T(code, args...)))
 }
 
-// Check runs rule and records its message under field when it does not pass.
-// It returns an error only when the rule could not run.
-func (e *Errors) Check(ctx context.Context, field string, rule Rule) error {
-	ok, err := rule.Passes(ctx)
+// Check runs v and records its failure. It returns an error only when the
+// check could not run.
+func (e *Errors) Check(ctx context.Context, v Validator) error {
+	ok, err := v.Passes(ctx)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		e.Add(field, rule.Message())
+		b := v.base()
+		e.fields = append(e.fields, field(b.Location, b.Code, v.Message()))
 	}
 	return nil
 }
 
-// Empty reports whether no error was recorded.
+// Empty reports whether no field was recorded.
 func (e *Errors) Empty() bool {
 	return len(e.fields) == 0
 }
 
-// Err returns nil when no error was recorded, otherwise an *Error: a 422
-// whose body lists every field error.
+// Err returns nil when no field was recorded, otherwise a 422 *Error that
+// lists every one.
 func (e *Errors) Err() error {
 	if e.Empty() {
 		return nil
@@ -74,20 +111,65 @@ func (e *Errors) Err() error {
 	return &Error{Fields: e.fields}
 }
 
-// Error is a failed validation. The server's error handler writes it as a
-// 422 with Body as the JSON.
+// Error is a failed validation. The server's error handler writes it as
+// problem details with its status.
 type Error struct {
-	Fields []FieldError
+	// Status is 0 for 422.
+	Status int
+	Fields []problem.Error
 }
 
 func (e *Error) Error() string {
 	return "validation failed: " + strconv.Itoa(len(e.Fields)) + " invalid field(s)"
 }
 
-// StatusCode is 422 Unprocessable Entity.
-func (e *Error) StatusCode() int { return http.StatusUnprocessableEntity }
+// StatusCode is the status of the response, 422 unless the validator set one.
+func (e *Error) StatusCode() int {
+	if e.Status == 0 {
+		return http.StatusUnprocessableEntity
+	}
+	return e.Status
+}
 
-// ResponseBody is the JSON written to the client.
+// ResponseBody is the problem details written to the client. A 422 says the
+// data was invalid; another status (a 404 from a validator) carries the
+// message of the field that failed.
 func (e *Error) ResponseBody() any {
-	return Body{Message: "The given data was invalid.", Errors: e.Fields}
+	status := e.StatusCode()
+	detail := trans.T("general:invalid-data")
+	if status != http.StatusUnprocessableEntity && len(e.Fields) == 1 {
+		detail = e.Fields[0].Detail
+	}
+	body := problem.New(status, detail)
+	body.Errors = e.Fields
+	return body
+}
+
+// field turns a location into a JSON Pointer or a parameter name.
+func field(location, code, detail string) problem.Error {
+	f := problem.Error{Code: code, Detail: detail}
+	where, name, found := strings.Cut(location, ".")
+	switch {
+	case found && (where == "query" || where == "path" || where == "header"):
+		f.Parameter = name
+	case found && where == "body":
+		f.Pointer = pointer(name)
+	case where == "body":
+		f.Pointer = "#"
+	default:
+		f.Pointer = pointer(location)
+	}
+	return f
+}
+
+// pointer turns "items.0.quantity" into "#/items/0/quantity" (RFC 6901).
+func pointer(path string) string {
+	escape := strings.NewReplacer("~", "~0", "/", "~1")
+	var b strings.Builder
+	b.WriteString("#")
+	for _, part := range strings.Split(path, ".") {
+		b.WriteString("/")
+		b.WriteString(escape.Replace(part))
+	}
+	return b.String()
 }

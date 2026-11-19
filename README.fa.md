@@ -92,13 +92,14 @@ shop/
 │   │   │   ├── store.go          Store: آنچه سرویس از ذخیره‌سازی لازم دارد
 │   │   │   ├── repository.go     Repository: پیاده‌سازی Store روی orm.Repository[User]
 │   │   │   ├── service.go        Service: قانون‌ها — تنها ورودی برای بقیه
-│   │   │   └── status.go …       enum، validator، cache        (make:enum user/status …)
+│   │   │   └── status.go …       enum، cache                   (make:enum user/status …)
 │   │   └── sales/                وقتی موضوع‌ها زیاد شد گروه‌بندی کنید
 │   │       ├── order/
 │   │       └── payment/
 │   ├── api/                      HTTP — یک ورودی به domain
 │   │   ├── router.go             ‎/ping و ‎/health و یک خط برای هر نسخه
 │   │   ├── middleware/
+│   │   ├── validator/            ولیدیتورهای مشترک، گروه‌بندی‌شده: address/mobile.go …  (make:validator)
 │   │   ├── v1/
 │   │   │   ├── routes.go         همهٔ endpointهای v1 در یک فایل
 │   │   │   ├── users/            handler.go  request.go  response.go
@@ -106,11 +107,13 @@ shop/
 │   │   └── v2/                   فقط چیزهایی که در v2 عوض شده
 │   ├── platform/                 زیرساخت — بدون قانون کسب‌وکار
 │   │   ├── config/  server/  validate/  health/
+│   │   ├── problem/  trans/      بدنهٔ خطای RFC 9457؛ trans.T از lang/fa.json می‌خواند
 │   │   ├── database/  database/orm/  database/migrate/
 │   │   ├── cache/
 │   │   └── payment/              کلاینت سرویس‌های دیگر           (make:client)
 │   └── seed/                     seederها                        (make:seeder)
 │   └── arch_test.go              اگر لایه‌ای جهت اشتباه import کند، go test خطا می‌دهد
+├── lang/fa.json                  همهٔ متن‌هایی که API نشان می‌دهد، با کلید
 ├── migrations/                   SQL خام، ‎*.up.sql و ‎*.down.sql (داخل باینری embed می‌شوند)
 ├── gortisan, gortisan.bat, gortisan.ps1
 └── go.mod                        فقط echo، bun + pgx، go-redis — همان‌هایی که انتخاب کردید
@@ -136,7 +139,7 @@ api, worker  ──►  domain  ──►  platform
 
 `internal/arch_test.go` خطا می‌دهد اگر domain پکیج `api` را import کند، اگر `platform` به domain وابسته شود، یا اگر `api/v2` پکیج `api/v1` را import کند.
 
-**فایل‌هایی که به آن‌ها اضافه می‌شود.** فایل‌هایی که یک نوع تعریف را جمع می‌کنند — `handler.go`، `request.go`، `response.go`، `validator.go`، `cache.go` — با اولین دستوری که لازمشان دارد ساخته می‌شوند و دستورهای بعدی به آن‌ها اضافه می‌کنند: `make:handler v1/user/get` یک متد به `handler.go`، نوع `GetRequest` به `request.go` و `GetResponse` به `response.go` اضافه می‌کند، همراه importهای لازم. هیچ چیزی از محتوای قبلی فایل عوض نمی‌شود؛ اگر اسمی از قبل وجود داشته باشد دست‌نخورده می‌ماند و گزارش می‌شود.
+**فایل‌هایی که به آن‌ها اضافه می‌شود.** فایل‌هایی که یک نوع تعریف را جمع می‌کنند — `handler.go`، `request.go`، `response.go`، `cache.go` — با اولین دستوری که لازمشان دارد ساخته می‌شوند و دستورهای بعدی به آن‌ها اضافه می‌کنند: `make:handler v1/user/get` یک متد به `handler.go`، نوع `GetRequest` به `request.go` و `GetResponse` به `response.go` اضافه می‌کند، همراه importهای لازم. هیچ چیزی از محتوای قبلی فایل عوض نمی‌شود؛ اگر اسمی از قبل وجود داشته باشد دست‌نخورده می‌ماند و گزارش می‌شود.
 
 ## اگر از لاراول می‌آیید
 
@@ -184,7 +187,7 @@ gortisan.bat list               # cmd
 | `make:handler <version>/<subject>/<action>` | یک متد در `internal/api/<version>/<resources>/handler.go`، ورودی‌اش در `request.go` و خروجی‌اش در `response.go`؛ نسخهٔ جدید `routes.go` خودش را می‌گیرد |
 | `make:request <version>/<subject>/<name>` | یک نوع با `Validate` در `request.go` |
 | `make:response <version>/<subject>/<name>` | یک نوع در `response.go` |
-| `make:validator <subject>/<name>` | یک قانون قابل استفادهٔ مجدد (`validate.Rule`) در `validator.go` همان domain |
+| `make:validator [<group>/]<name>` | `internal/api/validator/<group>/<name>.go`: یک ولیدیتور قابل استفادهٔ مجدد با `Passes` و `Validate`، و کلید پیامش در `lang/fa.json` |
 | `make:enum <subject>/<name>` | فایل `<name>.go` در domain: ثابت‌ها، `String`، `Valid`، `Parse…` و فهرست مقادیر |
 | `make:cache <subject>/<name>` | یک cache تایپ‌شدهٔ Redis دور یک loader در `cache.go` همان domain *(redis)* |
 | `make:middleware <name>` | `internal/api/middleware/<name>.go` |
@@ -429,30 +432,94 @@ seederها تابع‌هایی در `internal/seed` هستند که یک `orm.ID
 
 ## اعتبارسنجی و خطاها
 
-یک request همهٔ مشکلاتش را جمع می‌کند و با هم برمی‌گرداند؛ هر چیزی که یک بررسی لازم دارد مثل بقیه پاس داده می‌شود:
+ولیدیتور یک نوع کوچک در `internal/api/validator/<group>/` است که همهٔ نسخه‌های API از آن استفاده می‌کنند، مثل ولیدیتورهای سلام‌گیت. `make:validator address/mobile` آن را می‌سازد و شما فقط `Passes` را می‌نویسید:
 
 </div>
 
 ```go
-// internal/api/v1/users/request.go
-func (r *CreateRequest) Validate(ctx context.Context, users *user.Service) error {
-	var errs validate.Errors
-	if len(r.Mobile) != 11 {
-		errs.Add("mobile", "must be 11 digits")
-	}
-	if err := errs.Check(ctx, "mobile", user.NewMobileFree(users, r.Mobile)); err != nil {
-		return err // خود بررسی نتوانست اجرا شود
-	}
-	return errs.Err()
+// internal/api/validator/address/mobile.go
+type Mobile struct {
+	validate.Base // Location، Code (کلید پیام)، Status (صفر یعنی 422)
+	value string
 }
-```
 
-```json
-422 {"message": "The given data was invalid.",
-     "errors": [{"field": "mobile", "message": "must be 11 digits"}]}
+func NewMobile(location, value string) *Mobile {
+	return &Mobile{Base: validate.Base{Location: location, Code: "address:mobile"}, value: value}
+}
+
+func (v *Mobile) Passes(ctx context.Context) (bool, error) {
+	return mobileRE.MatchString(v.value), nil // error یعنی خود بررسی نتوانست اجرا شود
+}
+
+func (v *Mobile) Validate(ctx context.Context) error { return validate.Run(ctx, v) }
 ```
 
 <div dir="rtl">
+
+به دو شکل استفاده می‌شود:
+
+</div>
+
+```go
+// با اولین خطا متوقف شو، با status خود ولیدیتور (مثل .validate() در سلام‌گیت):
+if err := address.NewMobile("body.mobile", r.Mobile).Validate(ctx); err != nil {
+	return err
+}
+
+// یا همهٔ فیلدهای نامعتبر را با هم، در یک 422، برگردان:
+var errs validate.Errors
+if err := errs.Check(ctx, address.NewMobile("body.mobile", r.Mobile)); err != nil {
+	return err
+}
+if r.Age < 18 {
+	errs.Add("body.age", "general:min", "سن", 18)
+}
+return errs.Err()
+```
+
+<div dir="rtl">
+
+location یکی از این‌هاست: `body.<field>` (یا فقط `<field>`)، `body.items.0.quantity`، `query.<name>`، `path.<name>` یا `header.<name>`. اگر ولیدیتوری باید با status دیگری خطا بدهد، خودش تنظیمش می‌کند: `v.Status = http.StatusNotFound`.
+
+### بدنهٔ خطا: RFC 9457
+
+هر خطا، چه اعتبارسنجی، چه `echo.NewHTTPError`، چه مسیر ناموجود و چه 500، به شکل [problem details](https://www.rfc-editor.org/rfc/rfc9457) و با `Content-Type: application/problem+json` نوشته می‌شود:
+
+</div>
+
+```json
+422 {"type": "about:blank", "title": "Unprocessable Entity", "status": 422,
+     "detail": "داده‌های ارسال‌شده معتبر نیستند.",
+     "errors": [{"pointer": "#/mobile", "code": "address:mobile", "detail": "شماره موبایل معتبر نیست."},
+                {"pointer": "#/items/1/quantity", "code": "general:field-required", "detail": "تعداد اجباری است."}]}
+404 {"type": "about:blank", "title": "Not Found", "status": 404, "detail": "کاربر مورد نظر یافت نشد."}
+500 {"type": "about:blank", "title": "Internal Server Error", "status": 500}
+```
+
+<div dir="rtl">
+
+`pointer` یک JSON Pointer به داخل body است؛ برای مقدارهای path، query و header از `parameter` استفاده می‌شود. `code` کلید پیام است و ثابت می‌ماند، پس فرانت می‌تواند بر اساس آن تصمیم بگیرد.
+
+### ترجمه
+
+همهٔ متن‌هایی که API نشان می‌دهد در `lang/fa.json` هستند، با کلید و با `%s` برای آرگومان‌ها، و داخل باینری embed می‌شوند:
+
+</div>
+
+```json
+{
+  "general:entity-not-found": "%s مورد نظر یافت نشد.",
+  "address:mobile": "شماره موبایل معتبر نیست."
+}
+```
+
+```go
+trans.T("general:entity-not-found", "سفارش") // "سفارش مورد نظر یافت نشد."
+```
+
+<div dir="rtl">
+
+کلیدی که در فایل نباشد همان‌طور که هست برمی‌گردد. ولی اگر کد از کلیدی استفاده کند (`trans.T("…")` یا `validate.Base{Code: "…"}`) که در `fa.json` نیست، تست `internal/platform/trans` خطا می‌دهد و فایل و خط آن را نشان می‌دهد.
 
 domain خطاها را به زبان کسب‌وکار برمی‌گرداند (`errors.go`)؛ handler تصمیم می‌گیرد کد HTTP چه باشد:
 
@@ -461,7 +528,7 @@ domain خطاها را به زبان کسب‌وکار برمی‌گرداند (
 ```go
 u, err := h.service.Find(ctx, req.ID)
 if errors.Is(err, user.ErrNotFound) {
-	return echo.NewHTTPError(http.StatusNotFound, "user not found")
+	return echo.NewHTTPError(http.StatusNotFound, trans.T("general:entity-not-found", "کاربر"))
 }
 if err != nil {
 	return err // یک 500؛ جزئیاتش به لاگ می‌رود، نه به کلاینت
@@ -470,7 +537,7 @@ if err != nil {
 
 <div dir="rtl">
 
-بدنهٔ هر خطا `{"message": "..."}` است. هر درخواست یک خط لاگ JSON با method، مسیر، status و مدت زمان می‌نویسد؛ خطاهای 5xx همراه علتشان لاگ می‌شوند و panic همراه stack.
+هر درخواست یک خط لاگ JSON با method، مسیر، status و مدت زمان می‌نویسد؛ خطاهای 5xx همراه علتشان لاگ می‌شوند و panic همراه stack.
 
 سرور یک `http.Server` ساده است با `ReadHeaderTimeout`، `ReadTimeout`، `WriteTimeout`، `IdleTimeout` و `MaxHeaderBytes` (با `HTTP_*` در `.env`)، پس یک کلاینت کند یا بیکار نمی‌تواند اتصال‌ها را باز نگه دارد. بازیابی از panic چند خط در `internal/platform/server` است، نه یک کتابخانه.
 

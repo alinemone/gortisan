@@ -2,6 +2,8 @@ package generator
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/token"
@@ -79,7 +81,20 @@ const (
 	ormPath      = "internal/platform/database/orm/orm.go"
 	redisPath    = "internal/platform/cache/redis.go"
 	validatePath = "internal/platform/validate/validate.go"
+	langPath     = "lang/fa.json"
 )
+
+// validateOutputs are validation, problem details and translation: every
+// project has them, and make writes them into one that has no validate.
+var validateOutputs = []output{
+	{"internal/platform/problem/problem.go", "create/problem.go.tmpl"},
+	{"internal/platform/trans/trans.go", "create/trans.go.tmpl"},
+	{"internal/platform/trans/trans_test.go", "create/trans_test.go.tmpl"},
+	{"lang/lang.go", "create/lang.go.tmpl"},
+	{langPath, "create/lang_fa.json.tmpl"},
+	{validatePath, "create/validate.go.tmpl"},
+	{"internal/platform/validate/validate_test.go", "create/validate_test.go.tmpl"},
+}
 
 // MakeOptions configure Make.
 type MakeOptions struct {
@@ -286,12 +301,13 @@ func ensure(p *Project, outputs []output, d any, report *Report) error {
 	return nil
 }
 
-// ensureValidate writes internal/platform/validate when the project has none.
+// ensureValidate writes validate, problem, trans and lang when the project
+// has no internal/platform/validate.
 func ensureValidate(p *Project, report *Report) error {
-	return ensure(p, []output{
-		{validatePath, "create/validate.go.tmpl"},
-		{"internal/platform/validate/validate_test.go", "create/validate_test.go.tmpl"},
-	}, projectData{Module: p.Module}, report)
+	if p.exists(validatePath) {
+		return nil
+	}
+	return ensure(p, validateOutputs, projectData{Module: p.Module}, report)
 }
 
 func makeModel(p *Project, name string, opts MakeOptions, report *Report) error {
@@ -484,21 +500,92 @@ func makeResponse(p *Project, name string, report *Report) error {
 	return writeOrAppend(p, dir+"/response.go", "make/response.go.tmpl", d, report)
 }
 
+// makeValidator writes internal/api/validator/<group>/<name>.go, or
+// internal/api/validator/<name>.go without a group, and adds its message key
+// to lang/fa.json.
 func makeValidator(p *Project, name string, report *Report) error {
-	f, item, err := splitItem("validator", name)
-	if err != nil {
+	dir, pkg, prefix := "internal/api/validator", "validator", "validation"
+	var item string
+	var err error
+	if strings.Contains(strings.Trim(filepath.ToSlash(name), "/"), "/") {
+		var group feature
+		if group, item, err = splitItem("validator", name); err != nil {
+			return err
+		}
+		dir, pkg, prefix = dir+"/"+group.Path, group.Pkg, group.Label()
+	} else if item, err = identifier("validator", name); err != nil {
 		return err
 	}
+
 	if err := ensureValidate(p, report); err != nil {
 		return err
 	}
-	d := f.data(p)
-	d.Type = pascal(item)
-	d.Message = "is invalid"
-	if err := writeOrAppend(p, f.Dir()+"/validator.go", "make/validator.go.tmpl", d, report); err != nil {
+	src, err := os.ReadFile(filepath.Join(p.Root, filepath.FromSlash(validatePath)))
+	if err != nil {
 		return err
 	}
-	report.next("use it in a request's Validate: errs.Check(ctx, \"field\", %s.New%s(...))", f.Pkg, d.Type)
+	if !bytes.Contains(src, []byte("type Base struct")) {
+		return fmt.Errorf("%s comes from an older gortisan and has no validate.Base; "+
+			"replace internal/platform/validate with the one of a new project (gortisan create), "+
+			"with internal/platform/problem, internal/platform/trans and lang/", validatePath)
+	}
+	if err := p.require(langPath, "make:validator adds the validator's message there"); err != nil {
+		return err
+	}
+
+	key := prefix + ":" + strings.ReplaceAll(item, "_", "-")
+	d := data{Module: p.Module, Pkg: pkg, Type: pascal(item), Value: key}
+	file := dir + "/" + item + ".go"
+	if err := renderAll(p.Root, []output{{file, "make/validator.go.tmpl"}}, d, false, report); err != nil {
+		return err
+	}
+	if err := addPhrase(p, key, "مقدار وارد شده معتبر نیست.", report); err != nil {
+		return err
+	}
+	report.next("write Passes in %s and the message of %q in %s", file, key, langPath)
+	report.next("use it: if err := %s.New%s(\"body.field\", value).Validate(ctx); err != nil { return err }", pkg, d.Type)
+	return nil
+}
+
+// addPhrase adds key to lang/fa.json, after the last entry, unless it is
+// there already. The rest of the file is kept as it is.
+func addPhrase(p *Project, key, text string, report *Report) error {
+	path := filepath.Join(p.Root, filepath.FromSlash(langPath))
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var phrases map[string]string
+	if err := json.Unmarshal(src, &phrases); err != nil {
+		return fmt.Errorf("%s: %w", langPath, err)
+	}
+	if _, ok := phrases[key]; ok {
+		return nil
+	}
+	quote := func(s string) string {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(s) // a string always encodes
+		return strings.TrimSpace(buf.String())
+	}
+	end := bytes.LastIndexByte(src, '}')
+	head := bytes.TrimRight(src[:end], " \t\r\n")
+	sep := ",\n"
+	if len(phrases) == 0 {
+		sep = "\n"
+	}
+	var out bytes.Buffer
+	out.Write(head)
+	out.WriteString(sep + "  " + quote(key) + ": " + quote(text) + "\n")
+	out.Write(src[end:])
+	if !json.Valid(out.Bytes()) {
+		return fmt.Errorf("%s: could not add %q; add it by hand", langPath, key)
+	}
+	if err := os.WriteFile(path, out.Bytes(), 0o644); err != nil {
+		return err
+	}
+	report.Updated = append(report.Updated, langPath)
 	return nil
 }
 

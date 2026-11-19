@@ -14,9 +14,11 @@ import (
 	"github.com/labstack/echo/v5"
 
 	"{{.Module}}/internal/platform/config"
+	"{{.Module}}/internal/platform/problem"
 )
 
-// New returns echo with request logging, panic recovery and JSON errors.
+// New returns echo with request logging, panic recovery and problem details
+// errors (RFC 9457).
 // outer middleware (such as metrics) runs before the request logger, so it
 // sees the final status of every request.
 func New(logger *slog.Logger, outer ...echo.MiddlewareFunc) *echo.Echo {
@@ -127,28 +129,25 @@ func statusOf(c *echo.Context) int {
 	return http.StatusOK
 }
 
-// errorResponse is the body of every error.
-type errorResponse struct {
-	Message string `json:"message"`
-}
-
-// bodyError is an error that carries its own status and JSON body, such as
+// bodyError is an error that carries its own status and body, such as
 // validate.Error.
 type bodyError interface {
 	StatusCode() int
 	ResponseBody() any
 }
 
-// errorHandler writes {"message": "..."}: an *echo.HTTPError keeps its status
-// and message, an error with its own body (validate.Error) writes that body,
-// and any other error is a 500 whose details stay in the log.
+// errorHandler writes every error as problem details (RFC 9457), with
+// Content-Type application/problem+json: an *echo.HTTPError keeps its status
+// and its message becomes the detail, an error with its own body
+// (validate.Error) writes that body, and any other error is a 500 whose
+// details stay in the log.
 func errorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
 	return func(c *echo.Context, err error) {
 		if r, uerr := echo.UnwrapResponse(c.Response()); uerr == nil && r.Committed {
 			return
 		}
 		status := http.StatusInternalServerError
-		var body any = errorResponse{Message: http.StatusText(status)}
+		var body any = problem.New(status, "")
 
 		var withBody bodyError
 		var httpErr *echo.HTTPError
@@ -158,20 +157,21 @@ func errorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
 			status, body = withBody.StatusCode(), withBody.ResponseBody()
 		case errors.As(err, &httpErr):
 			status = httpErr.Code
-			message := httpErr.Message
-			if message == "" {
-				message = http.StatusText(status)
+			detail := httpErr.Message
+			if detail == http.StatusText(status) {
+				detail = "" // the title already says it
 			}
-			body = errorResponse{Message: message}
+			body = problem.New(status, detail)
 		case errors.As(err, &coder):
 			status = coder.StatusCode()
-			body = errorResponse{Message: http.StatusText(status)}
+			body = problem.New(status, "")
 		}
 
 		var writeErr error
 		if c.Request().Method == http.MethodHead {
 			writeErr = c.NoContent(status)
 		} else {
+			c.Response().Header().Set(echo.HeaderContentType, problem.ContentType)
 			writeErr = c.JSON(status, body)
 		}
 		if writeErr != nil {

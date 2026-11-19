@@ -26,7 +26,7 @@ time that you cannot read in your own repository.
 - [The database layer](#the-database-layer)
 - [Validation and errors](#validation-and-errors)
 - [Migrations and seeders](#migrations-and-seeders)
-- [Adding auth, Sentry, translations…](#adding-auth-sentry-translations)
+- [Adding auth, Sentry…](#adding-auth-sentry)
 - [No magic: the rules](#no-magic-the-rules)
 - [Not supported yet](#not-supported-yet)
 - [Development](#development)
@@ -79,13 +79,14 @@ shop/
 │   │   │   ├── store.go          Store: what the service needs from storage
 │   │   │   ├── repository.go     Repository: implements Store on orm.Repository[User]
 │   │   │   ├── service.go        Service: the rules — the one entry point for everyone else
-│   │   │   └── status.go …       enums, validators, caches              (make:enum user/status …)
+│   │   │   └── status.go …       enums, caches                          (make:enum user/status …)
 │   │   └── sales/                subjects can be grouped once there are many
 │   │       ├── order/
 │   │       └── payment/
 │   ├── api/                      HTTP — an entry point into the domain
 │   │   ├── router.go             /ping, /health, and one line per API version
 │   │   ├── middleware/
+│   │   ├── validator/            reusable checks, by group: address/mobile.go …  (make:validator)
 │   │   ├── v1/
 │   │   │   ├── routes.go         every v1 endpoint, in one file
 │   │   │   ├── users/          handler.go  request.go  response.go
@@ -93,9 +94,11 @@ shop/
 │   │   └── v2/                   only what changed in v2
 │   ├── platform/                 INFRASTRUCTURE — no business rules
 │   │   ├── config/  server/  validate/  health/   server: http.Server with read/write/idle timeouts
+│   │   ├── problem/  trans/      RFC 9457 error bodies; trans.T reads lang/fa.json
 │   │   ├── database/  database/orm/  database/migrate/     bun over pgx (postgres)
 │   │   └── payment/              clients for other services                  (make:client)
 │   └── arch_test.go              fails `go test` when a layer imports the wrong way
+├── lang/fa.json                  every text the API shows, by key ("general:entity-not-found")
 ├── migrations/                   plain SQL, *.up.sql / *.down.sql
 ├── gortisan, gortisan.bat, gortisan.ps1
 └── go.mod                        echo, bun + pgx, go-redis — only what you picked
@@ -129,7 +132,7 @@ uses (`app/`, `business/`, `foundation/`) — keep that working as the project g
   imports the domain, or when `api/v2` imports `api/v1`.
 
 **Appended files.** Files that collect a kind of declaration — `handler.go`,
-`request.go`, `response.go`, `validator.go`, `cache.go` — are created
+`request.go`, `response.go`, `cache.go` — are created
 by the first command that needs them and appended to by the next:
 `make:handler v1/user/get` adds a method to `handler.go`, `GetRequest` to
 `request.go` and `GetResponse` to `response.go`, with the imports they need.
@@ -181,7 +184,7 @@ the same code, nobody needs gortisan installed, and `go.mod` stays untouched.
 | `make:handler <version>/<subject>/<action>` | a method in `internal/api/<version>/<resources>/handler.go`, its input in `request.go`, its output in `response.go`; a new version gets its `routes.go` |
 | `make:request <version>/<subject>/<name>` | a type with `Validate` in `request.go` |
 | `make:response <version>/<subject>/<name>` | a type in `response.go` |
-| `make:validator <subject>/<name>` | a reusable rule (`validate.Rule`) in the domain's `validator.go` |
+| `make:validator [<group>/]<name>` | `internal/api/validator/<group>/<name>.go`: a reusable check with `Passes` and `Validate`, and its message key in `lang/fa.json` |
 | `make:enum <subject>/<name>` | `<name>.go` in the domain: constants, `String`, `Valid`, `Parse…`, the list of values |
 | `make:cache <subject>/<name>` | a typed Redis cache around a loader in the domain's `cache.go` *(redis)* |
 | `make:middleware <name>` | `internal/api/middleware/<name>.go` |
@@ -435,27 +438,88 @@ transaction (`./gortisan db:seed users` runs one).
 
 ## Validation and errors
 
-A request collects every problem and returns them together; what a check needs
-is passed in like anything else:
+A validator is a small type in `internal/api/validator/<group>/`, shared by
+every API version, like salam-gate's validators. `make:validator address/mobile`
+writes it; you write `Passes`:
 
 ```go
-// internal/api/v1/users/request.go
-func (r *CreateRequest) Validate(ctx context.Context, users *user.Service) error {
-	var errs validate.Errors
-	if len(r.Mobile) != 11 {
-		errs.Add("mobile", "must be 11 digits")
-	}
-	if err := errs.Check(ctx, "mobile", user.NewMobileFree(users, r.Mobile)); err != nil {
-		return err // the check could not run
-	}
-	return errs.Err()
+// internal/api/validator/address/mobile.go
+type Mobile struct {
+	validate.Base // Location, Code (the message key), Status (0 = 422)
+	value string
+}
+
+func NewMobile(location, value string) *Mobile {
+	return &Mobile{Base: validate.Base{Location: location, Code: "address:mobile"}, value: value}
+}
+
+func (v *Mobile) Passes(ctx context.Context) (bool, error) {
+	return mobileRE.MatchString(v.value), nil // an error means the check could not run
+}
+
+func (v *Mobile) Validate(ctx context.Context) error { return validate.Run(ctx, v) }
+```
+
+Use it in one of two ways:
+
+```go
+// Stop at the first failure, with the validator's status:
+if err := address.NewMobile("body.mobile", r.Mobile).Validate(ctx); err != nil {
+	return err
+}
+
+// Or report every invalid field together, as one 422:
+var errs validate.Errors
+if err := errs.Check(ctx, address.NewMobile("body.mobile", r.Mobile)); err != nil {
+	return err
+}
+if r.Age < 18 {
+	errs.Add("body.age", "general:min", "سن", 18)
+}
+return errs.Err()
+```
+
+A location is `body.<field>` (or just `<field>`), `body.items.0.quantity`,
+`query.<name>`, `path.<name>` or `header.<name>`. A validator that should fail
+with another status sets it: `v.Status = http.StatusNotFound`.
+
+### Error bodies: RFC 9457
+
+Every error — validation, `echo.NewHTTPError`, a missing route, a 500 — is
+[problem details](https://www.rfc-editor.org/rfc/rfc9457) with
+`Content-Type: application/problem+json`:
+
+```json
+422 {"type": "about:blank", "title": "Unprocessable Entity", "status": 422,
+     "detail": "داده‌های ارسال‌شده معتبر نیستند.",
+     "errors": [{"pointer": "#/mobile", "code": "address:mobile", "detail": "شماره موبایل معتبر نیست."},
+                {"pointer": "#/items/1/quantity", "code": "general:field-required", "detail": "تعداد اجباری است."}]}
+404 {"type": "about:blank", "title": "Not Found", "status": 404, "detail": "کاربر مورد نظر یافت نشد."}
+500 {"type": "about:blank", "title": "Internal Server Error", "status": 500}
+```
+
+`pointer` is a JSON Pointer into the body; path, query and header values use
+`parameter`. `code` is the message key, stable for clients to match on.
+
+### Translations
+
+Every text the API shows is in `lang/fa.json`, by key, with `%s` for arguments,
+embedded in the binary:
+
+```json
+{
+  "general:entity-not-found": "%s مورد نظر یافت نشد.",
+  "address:mobile": "شماره موبایل معتبر نیست."
 }
 ```
 
-```json
-422 {"message": "The given data was invalid.",
-     "errors": [{"field": "mobile", "message": "must be 11 digits"}]}
+```go
+trans.T("general:entity-not-found", "سفارش") // "سفارش مورد نظر یافت نشد."
 ```
+
+A missing key is returned as it is, and `internal/platform/trans`'s test fails
+when the code uses one (`trans.T("…")` or `validate.Base{Code: "…"}`) that
+`fa.json` does not have, with the file and line.
 
 The domain returns errors in business terms (`errors.go`); the handler decides
 the status:
@@ -463,23 +527,22 @@ the status:
 ```go
 u, err := h.service.Find(ctx, req.ID)
 if errors.Is(err, user.ErrNotFound) {
-	return echo.NewHTTPError(http.StatusNotFound, "user not found")
+	return echo.NewHTTPError(http.StatusNotFound, trans.T("general:entity-not-found", "کاربر"))
 }
 if err != nil {
 	return err // a 500; the details go to the log, not the client
 }
 ```
 
-Every error body is `{"message": "..."}`. Every request writes one JSON log line
-with method, path, status and duration; 5xx lines are logged with their cause, and
-a panic with its stack.
+Every request writes one JSON log line with method, path, status and duration;
+5xx lines are logged with their cause, and a panic with its stack.
 
 The server is a plain `http.Server` with `ReadHeaderTimeout`, `ReadTimeout`,
 `WriteTimeout`, `IdleTimeout` and `MaxHeaderBytes` set (`HTTP_*` in `.env`), so a
 slow or idle client cannot hold connections open. Panic recovery is a dozen lines
 in `internal/platform/server`, not a library.
 
-## Adding auth, Sentry, translations…
+## Adding auth, Sentry…
 
 gortisan does not generate them, on purpose: every company does them differently,
 and a generated version would have to pick a library for you. They are a few lines

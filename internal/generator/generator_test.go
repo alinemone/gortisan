@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -106,6 +107,10 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 				{kind: "request", name: "v1/order/create"},
 				{kind: "response", name: "v1/order/detail"},
 				{kind: "validator", name: "order/not_paid"},
+				{kind: "validator", name: "mobile"},                 // no group: package validator
+				{kind: "validator", name: "address/mobile"},         // address.Mobile, "address:mobile"
+				{kind: "validator", name: "sales/order/max_weight"}, // a nested group
+				{kind: "validator", name: "address/mobile"},         // again: kept, the key not added twice
 				{kind: "enum", name: "order/status", opts: MakeOptions{Members: "pending,paid=5,sent"}},
 				{kind: "enum", name: "order/currency", opts: MakeOptions{Type: "string", Members: "irr,usd=USD"}},
 				{kind: "middleware", name: "request_id"},
@@ -454,5 +459,63 @@ func TestAddComponent(t *testing.T) {
 	}
 	if _, err := Add(p, "kafka"); err == nil {
 		t.Error("an unknown component must be rejected")
+	}
+}
+
+func TestMakeValidator(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/x\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project, err := FindProject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"address/mobile", "mobile", "sales/order/max_weight", "address/mobile"} {
+		if _, err := Make(project, "validator", name, MakeOptions{}); err != nil {
+			t.Fatalf("make:validator %s: %v", name, err)
+		}
+	}
+	for file, want := range map[string]string{
+		"internal/api/validator/address/mobile.go":         `package address`,
+		"internal/api/validator/mobile.go":                 `package validator`,
+		"internal/api/validator/sales/order/max_weight.go": `Code: "sales.order:max-weight"`,
+		"internal/platform/trans/trans.go":                 `func T(`,
+		"internal/platform/problem/problem.go":             `application/problem+json`,
+		"internal/platform/validate/validate.go":           `type Base struct`,
+	} {
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
+		if err != nil || !strings.Contains(string(content), want) {
+			t.Errorf("%s: want %q, err %v", file, want, err)
+		}
+	}
+
+	src, err := os.ReadFile(filepath.Join(root, "lang", "fa.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var phrases map[string]string
+	if err := json.Unmarshal(src, &phrases); err != nil {
+		t.Fatalf("fa.json is not valid JSON: %v\n%s", err, src)
+	}
+	for _, key := range []string{"general:invalid-data", "address:mobile", "validation:mobile", "sales.order:max-weight"} {
+		if phrases[key] == "" {
+			t.Errorf("fa.json has no %q:\n%s", key, src)
+		}
+	}
+	if n := strings.Count(string(src), `"address:mobile"`); n != 1 {
+		t.Errorf("address:mobile is in fa.json %d times", n)
+	}
+	if !strings.HasSuffix(string(src), "\"\n}\n") || strings.Index(string(src), `"general:max"`) > strings.Index(string(src), `"address:mobile"`) {
+		t.Errorf("keys must be added at the end, keeping the file:\n%s", src)
+	}
+
+	// A validate.go from before validate.Base must be replaced, not built on.
+	old := filepath.Join(root, "internal", "platform", "validate", "validate.go")
+	if err := os.WriteFile(old, []byte("package validate\n\ntype Rule interface{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Make(project, "validator", "address/postal_code", MakeOptions{}); err == nil || !strings.Contains(err.Error(), "older gortisan") {
+		t.Fatalf("an old validate.go: err = %v", err)
 	}
 }
