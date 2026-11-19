@@ -11,7 +11,7 @@ import (
 {{- if .Postgres}}
 	"github.com/jackc/pgx/v5/pgxpool"
 {{- end}}
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -50,7 +50,7 @@ func New() *Metrics {
 // outside the request logger and sees the final status.
 func (m *Metrics) Middleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			start := time.Now()
 			err := next(c)
 			route := c.Path() // the pattern, e.g. /v1/orders/:id, so ids do not explode the labels
@@ -58,7 +58,11 @@ func (m *Metrics) Middleware() echo.MiddlewareFunc {
 				route = "unmatched"
 			}
 			method := c.Request().Method
-			m.requests.WithLabelValues(method, route, strconv.Itoa(c.Response().Status)).Inc()
+			status := http.StatusOK
+			if r, err := echo.UnwrapResponse(c.Response()); err == nil && r.Status != 0 {
+				status = r.Status
+			}
+			m.requests.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
 			m.duration.WithLabelValues(method, route).Observe(time.Since(start).Seconds())
 			return err
 		}
@@ -87,10 +91,10 @@ func (m *Metrics) RegisterPool(pool *pgxpool.Pool) {
 func (m *Metrics) Handler(secret string) echo.HandlerFunc {
 	serve := echo.WrapHandler(promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{}))
 	want := []byte("Bearer " + secret)
-	return func(c echo.Context) error {
+	return func(c *echo.Context) error {
 		got := []byte(c.Request().Header.Get(echo.HeaderAuthorization))
 		if secret != "" && subtle.ConstantTimeCompare(got, want) != 1 {
-			return echo.NewHTTPError(http.StatusUnauthorized)
+			return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
 		}
 		return serve(c)
 	}

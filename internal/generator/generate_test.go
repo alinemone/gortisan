@@ -199,13 +199,13 @@ func TestGenerateLeavesHandWrittenMappings(t *testing.T) {
 }
 
 func TestAppendGo(t *testing.T) {
-	existing := "package user\n\nimport (\n\t\"fmt\"\n\n\t\"github.com/labstack/echo/v4\"\n)\n\n// A is kept.\nfunc A() { fmt.Println(echo.GET) }\n"
-	fragment := "package user\n\nimport (\n\t\"context\"\n\t\"net/http\"\n\n\t\"example.com/x/internal/validate\"\n\t\"github.com/labstack/echo/v4\"\n)\n\n// B is new.\nfunc B(ctx context.Context) error { _ = validate.Errors{}; return echo.NewHTTPError(http.StatusTeapot) }\n"
+	existing := "package user\n\nimport (\n\t\"fmt\"\n\n\t\"github.com/labstack/echo/v5\"\n)\n\n// A is kept.\nfunc A() { fmt.Println(echo.GET) }\n"
+	fragment := "package user\n\nimport (\n\t\"context\"\n\t\"net/http\"\n\n\t\"example.com/x/internal/validate\"\n\t\"github.com/labstack/echo/v5\"\n)\n\n// B is new.\nfunc B(ctx context.Context) error { _ = validate.Errors{}; return echo.NewHTTPError(http.StatusTeapot) }\n"
 	out, err := appendGo([]byte(existing), []byte(fragment))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "package user\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\t\"net/http\"\n\n\t\"example.com/x/internal/validate\"\n\t\"github.com/labstack/echo/v4\"\n)\n\n// A is kept.\nfunc A() { fmt.Println(echo.GET) }\n\n// B is new.\nfunc B(ctx context.Context) error { _ = validate.Errors{}; return echo.NewHTTPError(http.StatusTeapot) }\n"
+	want := "package user\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\t\"net/http\"\n\n\t\"example.com/x/internal/validate\"\n\t\"github.com/labstack/echo/v5\"\n)\n\n// A is kept.\nfunc A() { fmt.Println(echo.GET) }\n\n// B is new.\nfunc B(ctx context.Context) error { _ = validate.Errors{}; return echo.NewHTTPError(http.StatusTeapot) }\n"
 	if string(out) != want {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}

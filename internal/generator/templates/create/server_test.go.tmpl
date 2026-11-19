@@ -8,15 +8,22 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
+
+	"{{.Module}}/internal/platform/validate"
 )
 
 func TestErrors(t *testing.T) {
 	var logs bytes.Buffer
 	e := New(slog.New(slog.NewJSONHandler(&logs, nil)))
-	e.GET("/panic", func(c echo.Context) error { panic("boom") })
-	e.GET("/invalid", func(c echo.Context) error {
-		return echo.NewHTTPError(http.StatusUnprocessableEntity, "id must be positive")
+	e.GET("/panic", func(c *echo.Context) error { panic("boom") })
+	e.GET("/forbidden", func(c *echo.Context) error {
+		return echo.NewHTTPError(http.StatusForbidden, "not yours")
+	})
+	e.GET("/invalid", func(c *echo.Context) error {
+		var errs validate.Errors
+		errs.Add("id", "must be positive")
+		return errs.Err()
 	})
 
 	tests := []struct {
@@ -25,7 +32,8 @@ func TestErrors(t *testing.T) {
 		body   string
 	}{
 		{"/panic", http.StatusInternalServerError, `{"message":"Internal Server Error"}`},
-		{"/invalid", http.StatusUnprocessableEntity, `{"message":"id must be positive"}`},
+		{"/forbidden", http.StatusForbidden, `{"message":"not yours"}`},
+		{"/invalid", http.StatusUnprocessableEntity, `{"message":"The given data was invalid.","errors":[{"field":"id","message":"must be positive"}]}`},
 		{"/missing", http.StatusNotFound, `{"message":"Not Found"}`},
 	}
 	for _, tt := range tests {
@@ -38,5 +46,8 @@ func TestErrors(t *testing.T) {
 
 	if !strings.Contains(logs.String(), `"msg":"panic"`) || !strings.Contains(logs.String(), `"error":"panic: boom"`) {
 		t.Errorf("the panic was not logged with its error:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), `"path":"/forbidden","status":403`) {
+		t.Errorf("the request log does not show the final status:\n%s", logs.String())
 	}
 }

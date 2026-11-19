@@ -3,7 +3,7 @@
 [![test](https://github.com/alinemone/gortisan/actions/workflows/test.yml/badge.svg)](https://github.com/alinemone/gortisan/actions/workflows/test.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/alinemone/gortisan.svg)](https://pkg.go.dev/github.com/alinemone/gortisan)
 
-A code generator for Go HTTP services on [echo](https://echo.labstack.com), in the
+A code generator for Go HTTP services on [echo v5](https://echo.labstack.com), in the
 spirit of Laravel's `artisan` — without a framework behind it.
 
 One project layout, chosen so a beginner never has to decide where a file goes,
@@ -93,7 +93,7 @@ shop/
 │   ├── worker/                   Kafka — another entry point into the domain   (kafka)
 │   │   └── userworker/
 │   ├── platform/                 INFRASTRUCTURE — no business rules
-│   │   ├── config/  server/  validate/  health/
+│   │   ├── config/  server/  validate/  health/   server: http.Server with read/write/idle timeouts
 │   │   ├── database/  database/orm/                                           (postgres)
 │   │   ├── cache/  kafka/  cdc/  metrics/                                     (by --with)
 │   │   └── payment/              clients for other services                  (make:client)
@@ -370,6 +370,11 @@ Every error body is `{"message": "..."}`. Every request writes one JSON log line
 with method, path, status and duration; 5xx lines are logged with their cause, and
 a panic with its stack.
 
+The server is a plain `http.Server` with `ReadHeaderTimeout`, `ReadTimeout`,
+`WriteTimeout`, `IdleTimeout` and `MaxHeaderBytes` set (`HTTP_*` in `.env`), so a
+slow or idle client cannot hold connections open. Panic recovery is a dozen lines
+in `internal/platform/server`, not a library.
+
 ## Kafka: workers and CDC
 
 `create --with kafka` adds `internal/platform/kafka` (readers, writers, `Publish`)
@@ -444,6 +449,14 @@ Error reporting (Sentry and the like) goes the same way: a middleware passed to
    reflection, and you can replace it.)
 5. **Transactions are values** — `pgx.Tx` passed to `repo.WithTx(tx)` — and **errors
    carry meaning**: the domain names them, the API maps them to statuses.
+
+## Dependencies
+
+A generated project depends on **echo v5** and, when you pick them, **pgx**
+(PostgreSQL), **go-redis**, **kafka-go** and **Prometheus**. Nothing else: error
+reporting (Sentry…), tracing (OpenTelemetry…), other databases or queues are
+yours to add when you need them — a middleware, a client in `platform/`, a line in
+`main.go`. A starter kit that pins third-party SDKs would break when they change.
 
 ## Not supported yet
 

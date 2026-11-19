@@ -16,9 +16,8 @@ import (
 
 // Config is every setting of the service.
 type Config struct {
-	Port            string
-	Debug           bool
-	ShutdownTimeout time.Duration
+	Debug bool
+	HTTP  HTTP
 {{- if .Postgres}}
 	Postgres        Postgres
 {{- end}}
@@ -65,6 +64,18 @@ type Kafka struct {
 }
 {{- end}}
 
+// HTTP is the server: its port and the timeouts that keep slow or idle
+// clients from holding connections open.
+type HTTP struct {
+	Port              string
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	MaxHeaderBytes    int
+	ShutdownTimeout   time.Duration
+}
+
 // Load reads the settings. A .env file in the working directory is read
 // first; variables already set in the environment win over it.
 func Load() (Config, error) {
@@ -74,9 +85,16 @@ func Load() (Config, error) {
 
 	r := reader{}
 	cfg := Config{
-		Port:            r.str("PORT", "8080"),
-		Debug:           r.boolean("DEBUG", false),
-		ShutdownTimeout: r.duration("SHUTDOWN_TIMEOUT", 10*time.Second),
+		Debug: r.boolean("DEBUG", false),
+		HTTP: HTTP{
+			Port:              r.str("PORT", "8080"),
+			ReadHeaderTimeout: r.duration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
+			ReadTimeout:       r.duration("HTTP_READ_TIMEOUT", 30*time.Second),
+			WriteTimeout:      r.duration("HTTP_WRITE_TIMEOUT", 30*time.Second),
+			IdleTimeout:       r.duration("HTTP_IDLE_TIMEOUT", 120*time.Second),
+			MaxHeaderBytes:    r.integer("HTTP_MAX_HEADER_BYTES", 1<<20),
+			ShutdownTimeout:   r.duration("SHUTDOWN_TIMEOUT", 10*time.Second),
+		},
 {{- if .Postgres}}
 		Postgres: Postgres{
 			Host:           r.str("POSTGRES_HOST", "localhost"),

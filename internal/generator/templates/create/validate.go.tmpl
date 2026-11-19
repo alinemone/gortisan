@@ -13,8 +13,7 @@ package validate
 import (
 	"context"
 	"net/http"
-
-	"github.com/labstack/echo/v4"
+	"strconv"
 )
 
 // Rule is one named check, such as those written by `gortisan make:validator`.
@@ -66,14 +65,29 @@ func (e *Errors) Empty() bool {
 	return len(e.fields) == 0
 }
 
-// Err returns nil when no error was recorded, otherwise a 422 whose body
-// lists every field error.
+// Err returns nil when no error was recorded, otherwise an *Error: a 422
+// whose body lists every field error.
 func (e *Errors) Err() error {
 	if e.Empty() {
 		return nil
 	}
-	return echo.NewHTTPError(http.StatusUnprocessableEntity, Body{
-		Message: "The given data was invalid.",
-		Errors:  e.fields,
-	})
+	return &Error{Fields: e.fields}
+}
+
+// Error is a failed validation. The server's error handler writes it as a
+// 422 with Body as the JSON.
+type Error struct {
+	Fields []FieldError
+}
+
+func (e *Error) Error() string {
+	return "validation failed: " + strconv.Itoa(len(e.Fields)) + " invalid field(s)"
+}
+
+// StatusCode is 422 Unprocessable Entity.
+func (e *Error) StatusCode() int { return http.StatusUnprocessableEntity }
+
+// ResponseBody is the JSON written to the client.
+func (e *Error) ResponseBody() any {
+	return Body{Message: "The given data was invalid.", Errors: e.Fields}
 }

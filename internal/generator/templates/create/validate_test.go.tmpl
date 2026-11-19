@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"testing"
-
-	"github.com/labstack/echo/v4"
 )
 
 type rule struct {
@@ -31,11 +29,11 @@ func TestErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var httpErr *echo.HTTPError
-	if !errors.As(errs.Err(), &httpErr) || httpErr.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("want a 422, got %v", errs.Err())
+	var verr *Error
+	if !errors.As(errs.Err(), &verr) || verr.StatusCode() != http.StatusUnprocessableEntity {
+		t.Fatalf("want a 422 *Error, got %v", errs.Err())
 	}
-	body := httpErr.Message.(Body)
+	body := verr.ResponseBody().(Body)
 	if len(body.Errors) != 2 || body.Errors[1].Field != "status" {
 		t.Fatalf("errors = %+v", body.Errors)
 	}

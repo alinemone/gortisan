@@ -3,13 +3,13 @@ package {{.Pkg}}
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // {{.Action}} is registered in internal/api/{{.Version}}/routes.go, e.g.
 //
 //	g.{{.Method}}("{{.Path}}", {{.Var}}.{{.Action}})
-func (h *Handler) {{.Action}}(c echo.Context) error {
+func (h *Handler) {{.Action}}(c *echo.Context) error {
 	ctx := c.Request().Context()
 	var req {{.Action}}Request
 	if err := c.Bind(&req); err != nil {
@@ -26,5 +26,5 @@ func (h *Handler) {{.Action}}(c echo.Context) error {
 	//		return echo.NewHTTPError(http.StatusNotFound, "{{.Words}} not found")
 	//	}
 	//	return c.JSON(http.StatusOK, {{.Action}}Response{...})
-	return echo.NewHTTPError(http.StatusNotImplemented)
+	return echo.NewHTTPError(http.StatusNotImplemented, "not implemented")
 }
