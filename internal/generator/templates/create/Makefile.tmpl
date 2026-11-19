@@ -1,0 +1,16 @@
+.PHONY: run build test vet tidy
+
+run:
+	go run ./cmd/{{.Name}}
+
+build:
+	go build -o bin/{{.Name}} ./cmd/{{.Name}}
+
+test:
+	go test ./...
+
+vet:
+	go vet ./...
+
+tidy:
+	go mod tidy

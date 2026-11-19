@@ -1,0 +1,296 @@
+// Package orm maps Go structs to PostgreSQL tables with plain SQL.
+//
+// It is part of this project on purpose: read it, change it, move it to its
+// own module, or delete it. A repository can use it, write SQL by hand, or
+// mix both — they share the same connection and transaction.
+//
+// There is no reflection and no struct tags. Each table is described by a
+// Table value that lists its columns, how to scan a row and which values to
+// insert; `gortisan make model` writes that value into the repository file,
+// where it can be read and edited like any other code.
+package orm
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+// ErrNotFound is returned when a query that needs one row finds none.
+var ErrNotFound = errors.New("orm: not found")
+
+// DB is what *pgxpool.Pool and pgx.Tx have in common.
+type DB interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// Scanner is one row: pgx.Row or pgx.Rows.
+type Scanner interface {
+	Scan(dest ...any) error
+}
+
+// Set is the columns an update writes, by column name.
+type Set map[string]any
+
+// Table describes how T is stored.
+type Table[T any] struct {
+	// Name is the table, e.g. "orders".
+	Name string
+	// PrimaryKey is the primary key column, e.g. "id".
+	PrimaryKey string
+	// Columns are the columns read back, in the order Scan reads them.
+	Columns []string
+	// Scan reads one row of Columns into m.
+	Scan func(row Scanner, m *T) error
+	// InsertColumns are the columns Create writes, in the order of InsertValues.
+	InsertColumns []string
+	// InsertValues returns the values of InsertColumns for m.
+	InsertValues func(m *T) []any
+	// UpdatedAtColumn, when set, is set to now() by Update and UpdateWhere.
+	UpdatedAtColumn string
+	// SoftDeleteColumn, when set, makes Delete set it to now() instead of
+	// deleting the row, and makes every query skip rows where it is set
+	// (unless the query says WithTrashed).
+	SoftDeleteColumn string
+}
+
+// ColumnList returns Columns joined for a SELECT, so hand-written queries can
+// read rows that Scan understands:
+//
+//	rows, err := db.Query(ctx, "SELECT "+orderTable.ColumnList()+" FROM orders WHERE ...", args...)
+//	orders, err := orderTable.ScanRows(rows)
+func (t Table[T]) ColumnList() string {
+	return strings.Join(t.Columns, ", ")
+}
+
+// ScanRows reads every row and closes rows.
+func (t Table[T]) ScanRows(rows pgx.Rows) ([]*T, error) {
+	defer rows.Close()
+	var models []*T
+	for rows.Next() {
+		m := new(T)
+		if err := t.Scan(rows, m); err != nil {
+			return nil, fmt.Errorf("orm: scan %s: %w", t.Name, err)
+		}
+		models = append(models, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("orm: read %s: %w", t.Name, err)
+	}
+	return models, nil
+}
+
+// Find returns the row whose primary key is id, or ErrNotFound.
+func (t Table[T]) Find(ctx context.Context, db DB, id any) (*T, error) {
+	return t.First(ctx, db, Where(t.PrimaryKey+" = ?", id))
+}
+
+// First returns the first row q matches, or ErrNotFound.
+func (t Table[T]) First(ctx context.Context, db DB, q Query) (*T, error) {
+	sql, args, err := t.selectSQL(t.ColumnList(), q.Limit(1))
+	if err != nil {
+		return nil, err
+	}
+	m := new(T)
+	if err := t.Scan(db.QueryRow(ctx, sql, args...), m); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("orm: first %s: %w", t.Name, err)
+	}
+	return m, nil
+}
+
+// Get returns every row q matches.
+func (t Table[T]) Get(ctx context.Context, db DB, q Query) ([]*T, error) {
+	sql, args, err := t.selectSQL(t.ColumnList(), q)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("orm: get %s: %w", t.Name, err)
+	}
+	return t.ScanRows(rows)
+}
+
+// Count returns how many rows q matches; its order, limit and offset are ignored.
+func (t Table[T]) Count(ctx context.Context, db DB, q Query) (int64, error) {
+	q.orderBy, q.limit, q.offset = nil, 0, 0
+	sql, args, err := t.selectSQL("count(*)", q)
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	if err := db.QueryRow(ctx, sql, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("orm: count %s: %w", t.Name, err)
+	}
+	return n, nil
+}
+
+// Exists reports whether q matches any row.
+func (t Table[T]) Exists(ctx context.Context, db DB, q Query) (bool, error) {
+	inner, args, err := t.selectSQL("1", q.Limit(1))
+	if err != nil {
+		return false, err
+	}
+	var exists bool
+	if err := db.QueryRow(ctx, "SELECT EXISTS ("+inner+")", args...).Scan(&exists); err != nil {
+		return false, fmt.Errorf("orm: exists %s: %w", t.Name, err)
+	}
+	return exists, nil
+}
+
+// Create inserts m and reads the stored row back into it, so the id and the
+// database defaults (created_at, ...) are filled.
+func (t Table[T]) Create(ctx context.Context, db DB, m *T) error {
+	var sql string
+	var values []any
+	if len(t.InsertColumns) == 0 {
+		sql = "INSERT INTO " + t.Name + " DEFAULT VALUES RETURNING " + t.ColumnList()
+	} else {
+		values = t.InsertValues(m)
+		if len(values) != len(t.InsertColumns) {
+			return fmt.Errorf("orm: %s: InsertValues returned %d values for %d InsertColumns", t.Name, len(values), len(t.InsertColumns))
+		}
+		sql = "INSERT INTO " + t.Name + " (" + strings.Join(t.InsertColumns, ", ") + ") VALUES (" +
+			placeholders(1, len(values)) + ") RETURNING " + t.ColumnList()
+	}
+	if err := t.Scan(db.QueryRow(ctx, sql, values...), m); err != nil {
+		return fmt.Errorf("orm: create %s: %w", t.Name, err)
+	}
+	return nil
+}
+
+// Update writes set to the row whose primary key is id and returns the row
+// as stored, or ErrNotFound.
+func (t Table[T]) Update(ctx context.Context, db DB, id any, set Set) (*T, error) {
+	sql, args, err := t.updateSQL(Where(t.PrimaryKey+" = ?", id), set)
+	if err != nil {
+		return nil, err
+	}
+	m := new(T)
+	if err := t.Scan(db.QueryRow(ctx, sql+" RETURNING "+t.ColumnList(), args...), m); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("orm: update %s: %w", t.Name, err)
+	}
+	return m, nil
+}
+
+// UpdateWhere writes set to every row q matches and returns how many changed.
+func (t Table[T]) UpdateWhere(ctx context.Context, db DB, q Query, set Set) (int64, error) {
+	sql, args, err := t.updateSQL(q, set)
+	if err != nil {
+		return 0, err
+	}
+	tag, err := db.Exec(ctx, sql, args...)
+	if err != nil {
+		return 0, fmt.Errorf("orm: update %s: %w", t.Name, err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// Delete removes the row whose primary key is id, or marks it deleted when
+// the table soft-deletes. It returns ErrNotFound when there is no such row.
+func (t Table[T]) Delete(ctx context.Context, db DB, id any) error {
+	if t.SoftDeleteColumn == "" {
+		return t.ForceDelete(ctx, db, id)
+	}
+	sql := "UPDATE " + t.Name + " SET " + t.SoftDeleteColumn + " = now() WHERE " +
+		t.PrimaryKey + " = $1 AND " + t.SoftDeleteColumn + " IS NULL"
+	return t.execOne(ctx, db, "delete", sql, id)
+}
+
+// ForceDelete removes the row whose primary key is id, even when the table
+// soft-deletes.
+func (t Table[T]) ForceDelete(ctx context.Context, db DB, id any) error {
+	return t.execOne(ctx, db, "delete", "DELETE FROM "+t.Name+" WHERE "+t.PrimaryKey+" = $1", id)
+}
+
+func (t Table[T]) execOne(ctx context.Context, db DB, op, sql string, args ...any) error {
+	tag, err := db.Exec(ctx, sql, args...)
+	if err != nil {
+		return fmt.Errorf("orm: %s %s: %w", op, t.Name, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (t Table[T]) selectSQL(columns string, q Query) (string, []any, error) {
+	where, args, err := t.whereSQL(q, 0)
+	if err != nil {
+		return "", nil, err
+	}
+	return "SELECT " + columns + " FROM " + t.Name + where + q.tailSQL(), args, nil
+}
+
+func (t Table[T]) updateSQL(q Query, set Set) (string, []any, error) {
+	if len(set) == 0 {
+		return "", nil, fmt.Errorf("orm: update %s: nothing to set", t.Name)
+	}
+	columns := make([]string, 0, len(set))
+	for column := range set {
+		if !slices.Contains(t.Columns, column) || column == t.PrimaryKey {
+			return "", nil, fmt.Errorf("orm: update %s: %q is not an updatable column", t.Name, column)
+		}
+		columns = append(columns, column)
+	}
+	slices.Sort(columns) // the same Set always builds the same SQL
+
+	assignments := make([]string, 0, len(columns)+1)
+	args := make([]any, 0, len(columns))
+	for i, column := range columns {
+		assignments = append(assignments, fmt.Sprintf("%s = $%d", column, i+1))
+		args = append(args, set[column])
+	}
+	if _, given := set[t.UpdatedAtColumn]; t.UpdatedAtColumn != "" && !given {
+		assignments = append(assignments, t.UpdatedAtColumn+" = now()")
+	}
+
+	where, whereArgs, err := t.whereSQL(q, len(args))
+	if err != nil {
+		return "", nil, err
+	}
+	return "UPDATE " + t.Name + " SET " + strings.Join(assignments, ", ") + where, append(args, whereArgs...), nil
+}
+
+// whereSQL builds " WHERE ..." numbering placeholders after the first
+// `offset` arguments, adding the soft-delete condition.
+func (t Table[T]) whereSQL(q Query, offset int) (string, []any, error) {
+	var conditions []string
+	var args []any
+	for _, c := range q.where {
+		sql, err := rebind(c.sql, offset+len(args)+1, len(c.args))
+		if err != nil {
+			return "", nil, fmt.Errorf("orm: %s: %w", t.Name, err)
+		}
+		conditions = append(conditions, "("+sql+")")
+		args = append(args, c.args...)
+	}
+	if t.SoftDeleteColumn != "" && !q.withTrashed {
+		conditions = append(conditions, t.SoftDeleteColumn+" IS NULL")
+	}
+	if len(conditions) == 0 {
+		return "", args, nil
+	}
+	return " WHERE " + strings.Join(conditions, " AND "), args, nil
+}
+
+func placeholders(first, n int) string {
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = fmt.Sprintf("$%d", first+i)
+	}
+	return strings.Join(parts, ", ")
+}

@@ -1,0 +1,103 @@
+package repository
+
+import (
+	"context"
+
+	"{{.Module}}/internal/database"
+	"{{.Module}}/internal/database/orm"
+	"{{.Module}}/internal/model"
+)
+
+// {{.Var}}Table maps model.{{.Type}} to the {{.Table}} table. Keep it in step
+// with the struct and the migration: Scan reads Columns in their order, and
+// InsertValues returns InsertColumns in theirs.
+var {{.Var}}Table = orm.Table[model.{{.Type}}]{
+	Name:       "{{.Table}}",
+	PrimaryKey: "id",
+	Columns: []string{
+		"id",
+{{- range .Fields}}
+		"{{.Column}}",
+{{- end}}
+		"created_at",
+		"updated_at",
+{{- if .SoftDelete}}
+		"deleted_at",
+{{- end}}
+	},
+	Scan: func(row orm.Scanner, m *model.{{.Type}}) error {
+		return row.Scan(
+			&m.ID,
+{{- range .Fields}}
+			&m.{{.GoName}},
+{{- end}}
+			&m.CreatedAt,
+			&m.UpdatedAt,
+{{- if .SoftDelete}}
+			&m.DeletedAt,
+{{- end}}
+		)
+	},
+	InsertColumns: []string{
+{{- range .Fields}}
+		"{{.Column}}",
+{{- end}}
+	},
+	InsertValues: func(m *model.{{.Type}}) []any {
+		return []any{
+{{- range .Fields}}
+			m.{{.GoName}},
+{{- end}}
+		}
+	},
+	UpdatedAtColumn: "updated_at",
+{{- if .SoftDelete}}
+	SoftDeleteColumn: "deleted_at",
+{{- end}}
+}
+
+// {{.Type}}Repository reads and writes {{.Table}}.
+type {{.Type}}Repository struct {
+	db database.DBTX
+}
+
+func New{{.Type}}Repository(db database.DBTX) *{{.Type}}Repository {
+	return &{{.Type}}Repository{db: db}
+}
+
+// WithTx returns a copy that runs its queries in tx.
+func (r *{{.Type}}Repository) WithTx(tx database.DBTX) *{{.Type}}Repository {
+	return &{{.Type}}Repository{db: tx}
+}
+
+// FindByID returns orm.ErrNotFound when there is no such row.
+func (r *{{.Type}}Repository) FindByID(ctx context.Context, id int64) (*model.{{.Type}}, error) {
+	return {{.Var}}Table.Find(ctx, r.db, id)
+}
+
+func (r *{{.Type}}Repository) List(ctx context.Context, limit, offset int) ([]*model.{{.Type}}, error) {
+	return {{.Var}}Table.Get(ctx, r.db, orm.All().OrderBy("id DESC").Limit(limit).Offset(offset))
+}
+
+// Create inserts m and fills its id and timestamps.
+func (r *{{.Type}}Repository) Create(ctx context.Context, m *model.{{.Type}}) error {
+	return {{.Var}}Table.Create(ctx, r.db, m)
+}
+
+// Update writes set, e.g. orm.Set{"status": "paid"}, and returns the stored row.
+func (r *{{.Type}}Repository) Update(ctx context.Context, id int64, set orm.Set) (*model.{{.Type}}, error) {
+	return {{.Var}}Table.Update(ctx, r.db, id, set)
+}
+
+{{if .SoftDelete}}// Delete sets deleted_at; the row is then skipped by every query above.{{else}}// Delete removes the row.{{end}}
+func (r *{{.Type}}Repository) Delete(ctx context.Context, id int64) error {
+	return {{.Var}}Table.Delete(ctx, r.db, id)
+}
+
+// Plain SQL works next to the mapper, on the same connection or transaction:
+//
+//	func (r *{{.Type}}Repository) CountSince(ctx context.Context, since time.Time) (int64, error) {
+//		var n int64
+//		err := r.db.QueryRow(ctx, `SELECT count(*) FROM {{.Table}} WHERE created_at >= $1`, since).Scan(&n)
+//		return n, err
+//	}

@@ -1,0 +1,9 @@
+CREATE TABLE {{.Table}} (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+{{- range .Fields}}
+    {{.Column}} {{.SQLType}}{{if not .Nullable}} NOT NULL{{end}},
+{{- end}}
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(){{if .SoftDelete}},
+    deleted_at TIMESTAMPTZ{{end}}
+);

@@ -1,0 +1,9 @@
+package handler
+
+// {{.Handler}} holds the {{.Group}} endpoints. Add what they need (services,
+// repositories) as fields and pass them to New{{.Handler}} in main.go.
+type {{.Handler}} struct{}
+
+func New{{.Handler}}() *{{.Handler}} {
+	return &{{.Handler}}{}
+}

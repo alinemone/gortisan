@@ -1,0 +1,42 @@
+package server
+
+import (
+	"bytes"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/labstack/echo/v4"
+)
+
+func TestErrors(t *testing.T) {
+	var logs bytes.Buffer
+	e := New(slog.New(slog.NewJSONHandler(&logs, nil)))
+	e.GET("/panic", func(c echo.Context) error { panic("boom") })
+	e.GET("/invalid", func(c echo.Context) error {
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, "id must be positive")
+	})
+
+	tests := []struct {
+		path   string
+		status int
+		body   string
+	}{
+		{"/panic", http.StatusInternalServerError, `{"message":"Internal Server Error"}`},
+		{"/invalid", http.StatusUnprocessableEntity, `{"message":"id must be positive"}`},
+		{"/missing", http.StatusNotFound, `{"message":"Not Found"}`},
+	}
+	for _, tt := range tests {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+		if rec.Code != tt.status || strings.TrimSpace(rec.Body.String()) != tt.body {
+			t.Errorf("GET %s = %d %s, want %d %s", tt.path, rec.Code, rec.Body.String(), tt.status, tt.body)
+		}
+	}
+
+	if !strings.Contains(logs.String(), `"msg":"panic"`) || !strings.Contains(logs.String(), `"error":"panic: boom"`) {
+		t.Errorf("the panic was not logged with its error:\n%s", logs.String())
+	}
+}

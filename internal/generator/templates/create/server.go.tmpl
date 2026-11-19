@@ -1,0 +1,123 @@
+// Package server builds the echo instance and runs it until shutdown.
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+)
+
+// New returns echo with request logging, panic recovery and JSON errors.
+func New(logger *slog.Logger) *echo.Echo {
+	e := echo.New()
+	e.HideBanner = true
+	e.HidePort = true
+	e.HTTPErrorHandler = errorHandler(logger)
+	e.Use(
+		requestLogger(logger),
+		// A panic is logged with its stack here and returned as an error, so
+		// requestLogger writes the 500 and its line.
+		middleware.RecoverWithConfig(middleware.RecoverConfig{
+			DisableStackAll:     true,
+			DisableErrorHandler: true,
+			LogErrorFunc: func(c echo.Context, err error, stack []byte) error {
+				logger.ErrorContext(c.Request().Context(), "panic", "error", err.Error(), "stack", string(stack))
+				return fmt.Errorf("panic: %w", err)
+			},
+		}),
+	)
+	return e
+}
+
+// Run serves e on addr until ctx is done, then shuts down, giving open
+// requests up to timeout to finish.
+func Run(ctx context.Context, e *echo.Echo, addr string, timeout time.Duration) error {
+	errs := make(chan error, 1)
+	go func() {
+		errs <- e.Start(addr)
+	}()
+
+	select {
+	case err := <-errs:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return e.Shutdown(shutdownCtx)
+}
+
+// requestLogger writes one line per request after its response is written.
+// 5xx responses are logged as errors, with the error that caused them.
+func requestLogger(logger *slog.Logger) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			start := time.Now()
+			err := next(c)
+			if err != nil {
+				c.Error(err) // write the error response now, so the status below is final
+			}
+
+			request := c.Request()
+			status := c.Response().Status
+			attrs := []any{
+				"method", request.Method,
+				"path", request.URL.Path,
+				"status", status,
+				"duration_ms", float64(time.Since(start).Microseconds()) / 1000,
+				"ip", c.RealIP(),
+			}
+			level := slog.LevelInfo
+			if status >= http.StatusInternalServerError {
+				level = slog.LevelError
+				if err != nil {
+					attrs = append(attrs, "error", err.Error())
+				}
+			}
+			logger.Log(request.Context(), level, "request", attrs...)
+			return nil
+		}
+	}
+}
+
+// errorResponse is the body of every error.
+type errorResponse struct {
+	Message string `json:"message"`
+}
+
+// errorHandler writes {"message": "..."}. An *echo.HTTPError keeps its status
+// and message; any other error is a 500 whose details stay in the log.
+func errorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
+	return func(err error, c echo.Context) {
+		if c.Response().Committed {
+			return
+		}
+		status := http.StatusInternalServerError
+		message := http.StatusText(status)
+		var httpErr *echo.HTTPError
+		if errors.As(err, &httpErr) {
+			status = httpErr.Code
+			message = fmt.Sprint(httpErr.Message)
+		}
+
+		var writeErr error
+		if c.Request().Method == http.MethodHead {
+			writeErr = c.NoContent(status)
+		} else {
+			writeErr = c.JSON(status, errorResponse{Message: message})
+		}
+		if writeErr != nil {
+			logger.Error("write error response", "error", writeErr)
+		}
+	}
+}

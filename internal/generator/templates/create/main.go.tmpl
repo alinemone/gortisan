@@ -1,0 +1,83 @@
+// Command {{.Name}} runs the {{.Title}} HTTP service.
+//
+// Every dependency is built here, in order, and handed to whoever needs it:
+// config -> connections -> repositories -> services -> handlers -> routes.
+// Nothing is looked up from a context or a registry.
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"{{.Module}}/internal/config"
+{{- if .Redis}}
+	"{{.Module}}/internal/cache"
+{{- end}}
+{{- if .Postgres}}
+	"{{.Module}}/internal/database"
+{{- end}}
+	"{{.Module}}/internal/handler"
+	"{{.Module}}/internal/router"
+	"{{.Module}}/internal/server"
+)
+
+func main() {
+	if err := run(); err != nil {
+		slog.Error("{{.Name}} stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	logger := newLogger(cfg.Debug)
+	slog.SetDefault(logger)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+{{if .Postgres}}
+	db, err := database.Open(ctx, cfg.Postgres)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+{{end}}
+{{- if .Redis}}
+	rdb, err := cache.Open(ctx, cfg.Redis)
+	if err != nil {
+		return err
+	}
+	defer rdb.Close()
+{{end}}
+	// Repositories, services and handlers are built here and passed down.
+	// Example:
+	//
+	//	orders := repository.NewOrderRepository(db)
+	//	orderService := service.NewOrderService(orders)
+	//	handlers.Order = handler.NewOrderHandler(orderService)
+	handlers := router.Handlers{
+		Health: handler.NewHealthHandler({{if .Postgres}}db{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}rdb{{end}}),
+	}
+
+	e := server.New(logger)
+	router.Register(e, handlers)
+
+	logger.Info("listening", "addr", ":"+cfg.Port)
+	return server.Run(ctx, e, ":"+cfg.Port, cfg.ShutdownTimeout)
+}
+
+func newLogger(debug bool) *slog.Logger {
+	level := slog.LevelInfo
+	if debug {
+		level = slog.LevelDebug
+	}
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+}

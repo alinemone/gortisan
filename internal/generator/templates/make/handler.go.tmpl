@@ -1,0 +1,42 @@
+package handler
+
+import (
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+)
+
+// {{.TypeName}}Request is the input of {{.Method}}. c.Bind fills it from the path
+// (`param:"id"`), the query string (`query:"page"`) and the JSON body (`json:"name"`).
+type {{.TypeName}}Request struct{}
+
+// Validate checks the request after binding.
+func (r *{{.TypeName}}Request) Validate() error {
+	// e.g. if r.ID <= 0 { return echo.NewHTTPError(http.StatusUnprocessableEntity, "id must be positive") }
+	return nil
+}
+
+// {{.TypeName}}Response is the output of {{.Method}}.
+type {{.TypeName}}Response struct{}
+
+// {{.Method}} is registered in internal/router/router.go, e.g.
+//
+//	v1.GET("{{.Route}}", h.{{.Field}}.{{.Method}})
+func (h *{{.Handler}}) {{.Method}}(c echo.Context) error {
+	var req {{.TypeName}}Request
+	if err := c.Bind(&req); err != nil {
+		return err
+	}
+	if err := req.Validate(); err != nil {
+		return err
+	}
+
+	// Call a service here and map its result to {{.TypeName}}Response:
+	//
+	//	result, err := h.service.Do(c.Request().Context(), ...)
+	//	if errors.Is(err, orm.ErrNotFound) {
+	//		return echo.NewHTTPError(http.StatusNotFound, "not found")
+	//	}
+	//	return c.JSON(http.StatusOK, {{.TypeName}}Response{...})
+	return echo.NewHTTPError(http.StatusNotImplemented)
+}
