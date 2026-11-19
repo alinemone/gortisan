@@ -45,8 +45,8 @@ type Base struct {
 }
 
 // Message is the text of Code. Define Message on the validator itself to put
-// arguments in, e.g. trans.T(v.Code, "تعداد", v.min).
-func (b Base) Message() string { return trans.T(b.Code) }
+// arguments in, e.g. trans.Message(v.Code, "تعداد", v.min).
+func (b Base) Message() string { return trans.Message(b.Code) }
 
 func (b Base) base() Base { return b }
 
@@ -80,7 +80,7 @@ type Errors struct {
 // Add records that the value at location is invalid, with the text of code
 // in lang/fa.json and args put in its %s.
 func (e *Errors) Add(location, code string, args ...any) {
-	e.fields = append(e.fields, field(location, code, trans.T(code, args...)))
+	e.fields = append(e.fields, field(location, code, trans.Message(code, args...)))
 }
 
 // Check runs v and records its failure. It returns an error only when the
@@ -136,7 +136,7 @@ func (e *Error) StatusCode() int {
 // message of the field that failed.
 func (e *Error) ResponseBody() any {
 	status := e.StatusCode()
-	detail := trans.T("general:invalid-data")
+	detail := trans.Message("general:invalid-data")
 	if status != http.StatusUnprocessableEntity && len(e.Fields) == 1 {
 		detail = e.Fields[0].Detail
 	}

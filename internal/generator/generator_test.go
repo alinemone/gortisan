@@ -480,7 +480,7 @@ func TestMakeValidator(t *testing.T) {
 		"internal/api/validator/address/mobile.go":         `package address`,
 		"internal/api/validator/mobile.go":                 `package validator`,
 		"internal/api/validator/sales/order/max_weight.go": `Code: "sales.order:max-weight"`,
-		"internal/platform/trans/trans.go":                 `func T(`,
+		"internal/platform/trans/trans.go":                 `func Message(`,
 		"internal/platform/problem/problem.go":             `application/problem+json`,
 		"internal/platform/validate/validate.go":           `type Base struct`,
 	} {

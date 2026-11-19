@@ -12,19 +12,19 @@ import (
 )
 
 func TestT(t *testing.T) {
-	if got := T("general:field-required", "موبایل"); got != "موبایل اجباری است." {
+	if got := Message("general:field-required", "موبایل"); got != "موبایل اجباری است." {
 		t.Errorf("with an argument: %q", got)
 	}
-	if got := T("general:min", "تعداد", 1); got != "تعداد نباید کمتر از 1 باشد." {
+	if got := Message("general:min", "تعداد", 1); got != "تعداد نباید کمتر از 1 باشد." {
 		t.Errorf("with a number: %q", got)
 	}
-	if got := T("no:such-key", "x"); got != "no:such-key" {
+	if got := Message("no:such-key", "x"); got != "no:such-key" {
 		t.Errorf("a missing key must come back as it is, got %q", got)
 	}
 }
 
 // TestKeysExist fails when the code uses a key that lang/fa.json does not
-// have: trans.T("<key>", ...) and the Code of a validate.Base.
+// have: trans.Message("<key>", ...) and the Code of a validate.Base.
 func TestKeysExist(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -73,8 +73,8 @@ func usedKeys(file *ast.File, fset *token.FileSet) []usedKey {
 	}
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch n := n.(type) {
-		case *ast.CallExpr: // trans.T("key", ...)
-			if isSelector(n.Fun, "trans", "T") && len(n.Args) > 0 {
+		case *ast.CallExpr: // trans.Message("key", ...)
+			if isSelector(n.Fun, "trans", "Message") && len(n.Args) > 0 {
 				add(n.Args[0])
 			}
 		case *ast.CompositeLit: // validate.Base{Code: "key"}

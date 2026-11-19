@@ -94,7 +94,7 @@ shop/
 │   │   └── v2/                   only what changed in v2
 │   ├── platform/                 INFRASTRUCTURE — no business rules
 │   │   ├── config/  server/  validate/  health/   server: http.Server with read/write/idle timeouts
-│   │   ├── problem/  trans/      RFC 9457 error bodies; trans.T reads lang/fa.json
+│   │   ├── problem/  trans/      RFC 9457 error bodies; trans.Message reads lang/fa.json
 │   │   ├── database/  database/orm/  database/migrate/     bun over pgx (postgres)
 │   │   └── payment/              clients for other services                  (make:client)
 │   └── arch_test.go              fails `go test` when a layer imports the wrong way
@@ -514,11 +514,11 @@ embedded in the binary:
 ```
 
 ```go
-trans.T("general:entity-not-found", "سفارش") // "سفارش مورد نظر یافت نشد."
+trans.Message("general:entity-not-found", "سفارش") // "سفارش مورد نظر یافت نشد."
 ```
 
 A missing key is returned as it is, and `internal/platform/trans`'s test fails
-when the code uses one (`trans.T("…")` or `validate.Base{Code: "…"}`) that
+when the code uses one (`trans.Message("…")` or `validate.Base{Code: "…"}`) that
 `fa.json` does not have, with the file and line.
 
 The domain returns errors in business terms (`errors.go`); the handler decides
@@ -527,7 +527,7 @@ the status:
 ```go
 u, err := h.service.Find(ctx, req.ID)
 if errors.Is(err, user.ErrNotFound) {
-	return echo.NewHTTPError(http.StatusNotFound, trans.T("general:entity-not-found", "کاربر"))
+	return echo.NewHTTPError(http.StatusNotFound, trans.Message("general:entity-not-found", "کاربر"))
 }
 if err != nil {
 	return err // a 500; the details go to the log, not the client

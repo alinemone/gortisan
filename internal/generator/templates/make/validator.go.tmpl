@@ -43,7 +43,7 @@ func (v *{{.Type}}) Passes(ctx context.Context) (bool, error) {
 // Validate stops at this check: nil when it passes, otherwise its error.
 // The message is the text of Code; to put arguments in it, define
 //
-//	func (v *{{.Type}}) Message() string { return trans.T(v.Code, ...) }
+//	func (v *{{.Type}}) Message() string { return trans.Message(v.Code, ...) }
 func (v *{{.Type}}) Validate(ctx context.Context) error {
 	return validate.Run(ctx, v)
 }

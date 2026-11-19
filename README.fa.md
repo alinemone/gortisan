@@ -107,7 +107,7 @@ shop/
 │   │   └── v2/                   فقط چیزهایی که در v2 عوض شده
 │   ├── platform/                 زیرساخت — بدون قانون کسب‌وکار
 │   │   ├── config/  server/  validate/  health/
-│   │   ├── problem/  trans/      بدنهٔ خطای RFC 9457؛ trans.T از lang/fa.json می‌خواند
+│   │   ├── problem/  trans/      بدنهٔ خطای RFC 9457؛ trans.Message از lang/fa.json می‌خواند
 │   │   ├── database/  database/orm/  database/migrate/
 │   │   ├── cache/
 │   │   └── payment/              کلاینت سرویس‌های دیگر           (make:client)
@@ -514,12 +514,12 @@ location یکی از این‌هاست: `body.<field>` (یا فقط `<field>`)،
 ```
 
 ```go
-trans.T("general:entity-not-found", "سفارش") // "سفارش مورد نظر یافت نشد."
+trans.Message("general:entity-not-found", "سفارش") // "سفارش مورد نظر یافت نشد."
 ```
 
 <div dir="rtl">
 
-کلیدی که در فایل نباشد همان‌طور که هست برمی‌گردد. ولی اگر کد از کلیدی استفاده کند (`trans.T("…")` یا `validate.Base{Code: "…"}`) که در `fa.json` نیست، تست `internal/platform/trans` خطا می‌دهد و فایل و خط آن را نشان می‌دهد.
+کلیدی که در فایل نباشد همان‌طور که هست برمی‌گردد. ولی اگر کد از کلیدی استفاده کند (`trans.Message("…")` یا `validate.Base{Code: "…"}`) که در `fa.json` نیست، تست `internal/platform/trans` خطا می‌دهد و فایل و خط آن را نشان می‌دهد.
 
 domain خطاها را به زبان کسب‌وکار برمی‌گرداند (`errors.go`)؛ handler تصمیم می‌گیرد کد HTTP چه باشد:
 
@@ -528,7 +528,7 @@ domain خطاها را به زبان کسب‌وکار برمی‌گرداند (
 ```go
 u, err := h.service.Find(ctx, req.ID)
 if errors.Is(err, user.ErrNotFound) {
-	return echo.NewHTTPError(http.StatusNotFound, trans.T("general:entity-not-found", "کاربر"))
+	return echo.NewHTTPError(http.StatusNotFound, trans.Message("general:entity-not-found", "کاربر"))
 }
 if err != nil {
 	return err // یک 500؛ جزئیاتش به لاگ می‌رود، نه به کلاینت

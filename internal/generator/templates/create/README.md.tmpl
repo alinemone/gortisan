@@ -64,7 +64,7 @@ and `internal/arch_test.go` enforces it, including that `api/v2` never imports
   either stops the request (`address.NewMobile("body.mobile", m).Validate(ctx)`) or
   joins the others (`errs.Check(ctx, ...)`, `errs.Add(...)`, `return errs.Err()`).
 - **Errors are RFC 9457 problem details** (`application/problem+json`), and every
-  text is a key of `lang/fa.json`: `trans.T("general:entity-not-found", "سفارش")`.
+  text is a key of `lang/fa.json`: `trans.Message("general:entity-not-found", "سفارش")`.
 {{- if .Postgres}}
 - **Transactions are explicit.** `orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error { ... })`
   and `repo.WithTx(tx)`.
