@@ -102,7 +102,7 @@ do not want them.
 ./gortisan make:enum order_status --members "pending,paid,sent"
 ./gortisan make:client salam-pay
 {{- if .Postgres}}
-./gortisan make:model order                   # then add columns where the "name" comments show
+./gortisan make:model order                   # columns: fields with db tags in the struct
 ./gortisan make:migration add_index_to_orders
 {{- end}}
 {{- if .Redis}}
