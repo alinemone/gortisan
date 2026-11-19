@@ -53,7 +53,7 @@ curl localhost:8080/metrics   # Prometheus
 Add an endpoint backed by a table:
 
 ```bash
-./gortisan make:model order --fields "user_id:int64,status:string,paid_at:time?" --soft-delete
+./gortisan make:model order
 ./gortisan make:service order
 ./gortisan make:handler order/get_order
 ```
@@ -116,7 +116,7 @@ otherwise.
 | `--with <list>` | `create` | any of `postgres`, `redis`, `kafka`, `metrics`; `all`; `none` (default: `postgres,redis,metrics`) |
 | `--no-tidy` | `create` | skip `go mod tidy` |
 | `--no-watch` | `run` | run once |
-| `--fields "<list>"` | `make:model` | columns, e.g. `user_id:int64,status:string,paid_at:time?` |
+| `--fields "<list>"` | `make:model` | optional: columns to write in, e.g. `user_id:int64,status:string` |
 | `--table <name>` | `make:model` | table name (default: the plural, `category` → `categories`) |
 | `--soft-delete` | `make:model` | add `deleted_at`; deletes set it and queries skip those rows |
 | `--members "<list>"` | `make:enum` | `pending,paid=5,sent`: integers count up from 1 or the previous value; strings default to the name |
@@ -126,10 +126,13 @@ otherwise.
 | `--group <group>` | `make:worker` | consumer group (default: the worker name) |
 | `--force` | `make:*` | overwrite files that exist |
 
-**Field types** for `--fields`: `string`/`text`, `int`/`int64`/`bigint`,
-`int32`/`integer`, `int16`, `float`/`float64`, `bool`, `time`, `json`/`jsonb`. A
-trailing `?` makes the column nullable (a pointer in Go). Every model also gets
-`id`, `created_at` and `updated_at`.
+**Columns.** `make:model order` is enough: the model gets `id`, `created_at` and
+`updated_at`, and every place a column goes — the struct, `Columns`, `Scan`, the
+insert lists and the migration — has a commented `name` line to copy. `--fields`
+only saves that editing when you already know the columns. Its types:
+`string`/`text`, `int`/`int64`/`bigint`, `int32`/`integer`, `int16`,
+`float`/`float64`, `bool`, `time`, `json`/`jsonb`; a trailing `?` makes the column
+nullable (a pointer in Go).
 
 ## What gets generated
 

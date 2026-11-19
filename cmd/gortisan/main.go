@@ -274,7 +274,7 @@ Usage:
     handler <group>/<action>            internal/handler/<group>_<action>.go
     service <name>                      internal/service/<name>_service.go
     model <name>                        model, repository and migration (postgres)
-        --fields "user_id:int64,status:string,paid_at:time?"
+        --fields "user_id:int64,status:string"   optional; columns to write in
         --table <name>                  (default: plural of <name>)
         --soft-delete                   add deleted_at
     migration <name>                    empty migrations/<time>_<name>.{up,down}.sql

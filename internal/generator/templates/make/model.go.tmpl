@@ -11,6 +11,10 @@ import (
 // internal/repository/{{.Name}}_repository.go.
 type {{.Type}} struct {
 	ID        int64      `json:"id"`
+{{- if not .Fields}}
+	// Add columns here, e.g. Name string `json:"name"`, then uncomment the
+	// matching "name" lines in the repository and the migration.
+{{- end}}
 {{- range .Fields}}
 	{{.GoName}} {{.GoType}} `json:"{{.Column}}"`
 {{- end}}

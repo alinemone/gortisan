@@ -1,5 +1,8 @@
 CREATE TABLE {{.Table}} (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+{{- if not .Fields}}
+    -- name TEXT NOT NULL,
+{{- end}}
 {{- range .Fields}}
     {{.Column}} {{.SQLType}}{{if not .Nullable}} NOT NULL{{end}},
 {{- end}}

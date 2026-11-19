@@ -16,6 +16,9 @@ var {{.Var}}Table = orm.Table[model.{{.Type}}]{
 	PrimaryKey: "id",
 	Columns: []string{
 		"id",
+{{- if not .Fields}}
+		// "name",
+{{- end}}
 {{- range .Fields}}
 		"{{.Column}}",
 {{- end}}
@@ -28,6 +31,9 @@ var {{.Var}}Table = orm.Table[model.{{.Type}}]{
 	Scan: func(row orm.Scanner, m *model.{{.Type}}) error {
 		return row.Scan(
 			&m.ID,
+{{- if not .Fields}}
+			// &m.Name,
+{{- end}}
 {{- range .Fields}}
 			&m.{{.GoName}},
 {{- end}}
@@ -39,12 +45,18 @@ var {{.Var}}Table = orm.Table[model.{{.Type}}]{
 		)
 	},
 	InsertColumns: []string{
+{{- if not .Fields}}
+		// "name",
+{{- end}}
 {{- range .Fields}}
 		"{{.Column}}",
 {{- end}}
 	},
 	InsertValues: func(m *model.{{.Type}}) []any {
 		return []any{
+{{- if not .Fields}}
+			// m.Name,
+{{- end}}
 {{- range .Fields}}
 			m.{{.GoName}},
 {{- end}}
