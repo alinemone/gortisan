@@ -14,16 +14,12 @@ package migrate
 
 import (
 	"context"
-	"errors"
+	"database/sql"
 	"fmt"
 	"io/fs"
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // lockID is the advisory lock taken while migrating (any constant works; it
@@ -104,23 +100,24 @@ func cutSuffixes(s string, suffixes ...string) (string, string, bool) {
 
 // Migrator applies migrations to one database.
 type Migrator struct {
-	pool       *pgxpool.Pool
+	db         *sql.DB
 	migrations []Migration
 }
 
-// New loads the migrations of fsys for pool.
-func New(pool *pgxpool.Pool, fsys fs.FS) (*Migrator, error) {
+// New loads the migrations of fsys for db, e.g. the *sql.DB of the bun DB
+// (db.DB).
+func New(db *sql.DB, fsys fs.FS) (*Migrator, error) {
 	migrations, err := Load(fsys)
 	if err != nil {
 		return nil, err
 	}
-	return &Migrator{pool: pool, migrations: migrations}, nil
+	return &Migrator{db: db, migrations: migrations}, nil
 }
 
 // Up applies every pending migration as one new batch and returns them.
 func (m *Migrator) Up(ctx context.Context) ([]Migration, error) {
 	var done []Migration
-	err := m.locked(ctx, func(conn *pgxpool.Conn) error {
+	err := m.locked(ctx, func(conn *sql.Conn) error {
 		applied, batch, err := m.applied(ctx, conn)
 		if err != nil {
 			return err
@@ -131,7 +128,7 @@ func (m *Migrator) Up(ctx context.Context) ([]Migration, error) {
 				continue
 			}
 			record := func(db execer) error {
-				_, err := db.Exec(ctx, `INSERT INTO schema_migrations (version, name, batch) VALUES ($1, $2, $3)`, mig.Version, mig.Name, batch)
+				_, err := db.ExecContext(ctx, `INSERT INTO schema_migrations (version, name, batch) VALUES ($1, $2, $3)`, mig.Version, mig.Name, batch)
 				return err
 			}
 			if err := run(ctx, conn, mig.Up, record); err != nil {
@@ -151,7 +148,7 @@ func (m *Migrator) Rollback(ctx context.Context, steps int) ([]Migration, error)
 		steps = 1
 	}
 	var done []Migration
-	err := m.locked(ctx, func(conn *pgxpool.Conn) error {
+	err := m.locked(ctx, func(conn *sql.Conn) error {
 		applied, last, err := m.applied(ctx, conn)
 		if err != nil {
 			return err
@@ -166,7 +163,7 @@ func (m *Migrator) Rollback(ctx context.Context, steps int) ([]Migration, error)
 				return fmt.Errorf("migrate: %s_%s has no .down.sql to roll back", mig.Version, mig.Name)
 			}
 			forget := func(db execer) error {
-				_, err := db.Exec(ctx, `DELETE FROM schema_migrations WHERE version = $1`, mig.Version)
+				_, err := db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = $1`, mig.Version)
 				return err
 			}
 			if err := run(ctx, conn, mig.Down, forget); err != nil {
@@ -181,11 +178,11 @@ func (m *Migrator) Rollback(ctx context.Context, steps int) ([]Migration, error)
 
 // Status lists every migration and whether it ran.
 func (m *Migrator) Status(ctx context.Context) ([]Status, error) {
-	conn, err := m.pool.Acquire(ctx)
+	conn, err := m.db.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Release()
+	defer conn.Close()
 	applied, _, err := m.applied(ctx, conn)
 	if err != nil {
 		return nil, err
@@ -202,17 +199,26 @@ func (m *Migrator) Status(ctx context.Context) ([]Status, error) {
 // Fresh drops every table of the current schema and applies all migrations.
 // It destroys all data; use it only on a development database.
 func (m *Migrator) Fresh(ctx context.Context) ([]Migration, error) {
-	err := m.locked(ctx, func(conn *pgxpool.Conn) error {
-		rows, err := conn.Query(ctx, `SELECT tablename FROM pg_tables WHERE schemaname = current_schema()`)
+	err := m.locked(ctx, func(conn *sql.Conn) error {
+		rows, err := conn.QueryContext(ctx, `SELECT quote_ident(tablename) FROM pg_tables WHERE schemaname = current_schema()`)
 		if err != nil {
 			return err
 		}
-		tables, err := pgx.CollectRows(rows, pgx.RowTo[string])
-		if err != nil {
+		var tables []string
+		for rows.Next() {
+			var table string
+			if err := rows.Scan(&table); err != nil {
+				rows.Close()
+				return err
+			}
+			tables = append(tables, table)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
 			return err
 		}
 		for _, table := range tables {
-			if _, err := conn.Exec(ctx, "DROP TABLE IF EXISTS "+pgx.Identifier{table}.Sanitize()+" CASCADE"); err != nil {
+			if _, err := conn.ExecContext(ctx, "DROP TABLE IF EXISTS "+table+" CASCADE"); err != nil {
 				return fmt.Errorf("migrate fresh: drop %s: %w", table, err)
 			}
 		}
@@ -225,46 +231,46 @@ func (m *Migrator) Fresh(ctx context.Context) ([]Migration, error) {
 }
 
 type execer interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// run executes sql and then bookkeep, both in one transaction unless the
+// run executes query and then bookkeep, both in one transaction unless the
 // migration opts out.
-func run(ctx context.Context, conn *pgxpool.Conn, sql string, bookkeep func(execer) error) error {
-	if strings.Contains(sql, noTransaction) {
-		if _, err := conn.Exec(ctx, sql); err != nil {
+func run(ctx context.Context, conn *sql.Conn, query string, bookkeep func(execer) error) error {
+	if strings.Contains(query, noTransaction) {
+		if _, err := conn.ExecContext(ctx, query); err != nil {
 			return err
 		}
 		return bookkeep(conn)
 	}
-	tx, err := conn.Begin(ctx)
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	if _, err := tx.Exec(ctx, sql); err != nil {
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, query); err != nil {
 		return err
 	}
 	if err := bookkeep(tx); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return tx.Commit()
 }
 
 // locked runs fn on one connection that holds the advisory lock, after
 // making sure schema_migrations exists.
-func (m *Migrator) locked(ctx context.Context, fn func(conn *pgxpool.Conn) error) error {
-	conn, err := m.pool.Acquire(ctx)
+func (m *Migrator) locked(ctx context.Context, fn func(conn *sql.Conn) error) error {
+	conn, err := m.db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, lockID); err != nil {
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, lockID); err != nil {
 		return fmt.Errorf("migrate: lock: %w", err)
 	}
-	defer func() { _, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, lockID) }()
+	defer func() { _, _ = conn.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, lockID) }()
 
-	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+	if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT PRIMARY KEY,
 		name       TEXT NOT NULL,
 		batch      INTEGER NOT NULL,
@@ -276,14 +282,17 @@ func (m *Migrator) locked(ctx context.Context, fn func(conn *pgxpool.Conn) error
 }
 
 // applied returns the recorded migrations by version and the last batch.
-func (m *Migrator) applied(ctx context.Context, conn *pgxpool.Conn) (map[string]Status, int, error) {
+func (m *Migrator) applied(ctx context.Context, conn *sql.Conn) (map[string]Status, int, error) {
 	applied := map[string]Status{}
-	rows, err := conn.Query(ctx, `SELECT version, batch, applied_at FROM schema_migrations`)
+	var exists bool
+	if err := conn.QueryRowContext(ctx, `SELECT to_regclass('schema_migrations') IS NOT NULL`).Scan(&exists); err != nil {
+		return nil, 0, err
+	}
+	if !exists {
+		return applied, 0, nil // never migrated: no table yet
+	}
+	rows, err := conn.QueryContext(ctx, `SELECT version, batch, applied_at FROM schema_migrations`)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
-			return applied, 0, nil // never migrated: no table yet
-		}
 		return nil, 0, err
 	}
 	defer rows.Close()

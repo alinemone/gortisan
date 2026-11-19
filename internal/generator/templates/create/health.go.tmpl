@@ -11,7 +11,7 @@ import (
 {{- end}}
 
 {{- if .Postgres}}
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/uptrace/bun"
 {{- end}}
 	"github.com/labstack/echo/v5"
 {{- if .Redis}}
@@ -22,14 +22,14 @@ import (
 // Handler answers /ping and /health.
 type Handler struct {
 {{- if .Postgres}}
-	db *pgxpool.Pool
+	db *bun.DB
 {{- end}}
 {{- if .Redis}}
 	redis *redis.Client
 {{- end}}
 }
 
-func NewHandler({{if .Postgres}}db *pgxpool.Pool{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}redis *redis.Client{{end}}) *Handler {
+func NewHandler({{if .Postgres}}db *bun.DB{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}redis *redis.Client{{end}}) *Handler {
 	return &Handler{ {{- if .Postgres}}db: db{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}redis: redis{{end -}} }
 }
 
@@ -53,7 +53,7 @@ func (h *Handler) Check(c *echo.Context) error {
 	response := Response{Status: "pass", Checks: map[string]string{}}
 {{- if .Postgres}}
 	response.Checks["postgres"] = "up"
-	if err := h.db.Ping(ctx); err != nil {
+	if err := h.db.PingContext(ctx); err != nil {
 		response.Status, response.Checks["postgres"] = "fail", "down"
 	}
 {{- end}}

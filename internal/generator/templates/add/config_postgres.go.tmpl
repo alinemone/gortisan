@@ -12,9 +12,12 @@ type Postgres struct {
 	Password       string
 	Schema         string // search_path when set
 	SSLMode        string // disable, prefer, require, verify-full ...
-	MaxConns       int32
-	MinConns       int32
 	ConnectTimeout time.Duration
+	// Connection pool (database/sql): open and idle connections, and how
+	// long a connection is reused.
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
 }
 
 func (r *reader) postgres() Postgres {
@@ -26,8 +29,9 @@ func (r *reader) postgres() Postgres {
 		Password:       r.str("POSTGRES_PASSWORD", ""),
 		Schema:         r.str("POSTGRES_SCHEMA", ""),
 		SSLMode:        r.str("POSTGRES_SSLMODE", "prefer"),
-		MaxConns:       int32(r.integer("POSTGRES_MAX_CONNS", 10)),
-		MinConns:       int32(r.integer("POSTGRES_MIN_CONNS", 2)),
 		ConnectTimeout: r.duration("POSTGRES_CONNECT_TIMEOUT", 5*time.Second),
+		MaxOpenConns:    r.integer("POSTGRES_MAX_OPEN_CONNS", 10),
+		MaxIdleConns:    r.integer("POSTGRES_MAX_IDLE_CONNS", 5),
+		ConnMaxLifetime: r.duration("POSTGRES_CONN_MAX_LIFETIME", 30*time.Minute),
 	}
 }

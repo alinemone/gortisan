@@ -6,6 +6,8 @@ require (
 	github.com/labstack/echo/v5 v5.3.1
 {{- if .Postgres}}
 	github.com/jackc/pgx/v5 v5.13.0
+	github.com/uptrace/bun v1.3.0
+	github.com/uptrace/bun/dialect/pgdialect v1.3.0
 {{- end}}
 {{- if .Redis}}
 	github.com/redis/go-redis/v9 v9.23.0

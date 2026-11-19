@@ -15,17 +15,16 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jackc/pgx/v5"
-
 	"{{.Module}}/internal/platform/config"
 	"{{.Module}}/internal/platform/database"
+	"{{.Module}}/internal/platform/database/orm"
 	"{{.Module}}/internal/seed"
 )
 
 // seeders run in this order.
 var seeders = []struct {
 	name string
-	run  func(context.Context, database.DBTX) error
+	run  func(context.Context, orm.IDB) error
 }{
 	{"{{.Name}}", seed.{{.Type}}},
 }
@@ -50,7 +49,7 @@ func run(args []string) error {
 	}
 	defer db.Close()
 
-	return database.InTx(ctx, db, func(tx pgx.Tx) error {
+	return orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error {
 		ran := 0
 		for _, s := range seeders {
 			if len(args) > 0 && args[0] != s.name {

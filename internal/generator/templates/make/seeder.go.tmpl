@@ -3,7 +3,7 @@ package seed
 import (
 	"context"
 
-	"{{.Module}}/internal/platform/database"
+	"{{.Module}}/internal/platform/database/orm"
 )
 
 // {{.Type}} fills the database with data for development or tests. It runs
@@ -12,6 +12,6 @@ import (
 //
 //	users := user.NewRepository(db)
 //	return users.Create(ctx, &user.User{Name: "Ali"})
-func {{.Type}}(ctx context.Context, db database.DBTX) error {
+func {{.Type}}(ctx context.Context, db orm.IDB) error {
 	return nil
 }

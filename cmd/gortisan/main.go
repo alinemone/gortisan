@@ -64,8 +64,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runAdd(args[1:], stdout, stderr)
 	case "run", "serve":
 		return runRun(args[1:], stdout, stderr)
-	case "generate", "gen":
-		return runGenerate(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, version())
 		return 0
@@ -240,56 +238,12 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		Watch:  !f.bools["no-watch"],
 		Stdout: stdout,
 		Stderr: stderr,
-		BeforeBuild: func() error {
-			if !hasORM(project) {
-				return nil
-			}
-			report, err := generator.Generate(project, generator.GenerateOptions{})
-			printReport(stderr, report)
-			return err
-		},
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "gortisan:", err)
 		return 1
 	}
 	return 0
-}
-
-// runGenerate is `gortisan generate [--check]`.
-func runGenerate(args []string, stdout, stderr io.Writer) int {
-	f, err := parseFlags(args, nil, []string{"check"})
-	if err != nil || len(f.positional) > 0 {
-		fmt.Fprintln(stderr, "usage: gortisan generate [--check]")
-		return 2
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintln(stderr, "gortisan:", err)
-		return 1
-	}
-	project, err := generator.FindProject(cwd)
-	if err != nil {
-		fmt.Fprintln(stderr, "gortisan:", err)
-		return 1
-	}
-	report, err := generator.Generate(project, generator.GenerateOptions{Check: f.bools["check"]})
-	printReport(stdout, report)
-	if err != nil {
-		fmt.Fprintln(stderr, "gortisan:", err)
-		return 1
-	}
-	if f.bools["check"] {
-		fmt.Fprintln(stdout, "generated files are up to date")
-	} else if len(report.Created)+len(report.Updated)+len(report.Removed)+len(report.Next) == 0 {
-		fmt.Fprintln(stdout, "nothing to generate; every mapping is up to date")
-	}
-	return 0
-}
-
-func hasORM(p *generator.Project) bool {
-	_, err := os.Stat(filepath.Join(p.Root, "internal", "platform", "database", "orm", "orm.go"))
-	return err == nil
 }
 
 // runProject is `go run ./cmd/<command> args...` in the project root.
@@ -409,10 +363,6 @@ Usage:
   gortisan db:seed [name]               run the seeders of internal/seed (go run ./cmd/seed)
   gortisan route:list                   every route: method, path, handler, file
 
-  gortisan generate [--check]           write the table mapping of every //gortisan:table
-                                        struct into its repository.go
-                                        (gortisan run and make:model do it for you)
-
   gortisan make:<kind> <name> [flags]   add code. A project has four layers:
         internal/domain/<subject>     the business (subjects can be grouped: sales/order)
         internal/api/<version>/       HTTP, one package per resource, named like its URL: users, orders
@@ -420,7 +370,9 @@ Usage:
 
     model <subject>                     <subject>.go, errors.go, store.go, repository.go,
                                         and a migration (postgres)
-        --fields "mobile:string,name:string"   optional; or add db-tagged fields later
+        --fields "mobile:string,name:string"   optional; or add bun-tagged fields later
+                                        types: string, int, int32, int16, float, bool,
+                                        time, json; a trailing ? makes it nullable
         --table <name>                  (default: plural of <subject>)
         --soft-delete                   add deleted_at
     service <subject>                   service.go, built on the Store

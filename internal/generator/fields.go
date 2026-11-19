@@ -13,6 +13,7 @@ type Field struct {
 	SQLType  string // BIGINT
 	Nullable bool
 	JSON     bool
+	Tag      string // the bun tag: user_id, meta,type:jsonb
 }
 
 type columnType struct {
@@ -80,6 +81,15 @@ func parseFields(spec string) ([]Field, error) {
 		if nullable && !isJSON {
 			goType = "*" + goType
 		}
+		tag := column
+		if isJSON {
+			// Without the type bun would send the bytes as bytea; nullzero
+			// writes a nil value as NULL instead of the JSON null.
+			tag += ",type:jsonb"
+			if nullable {
+				tag += ",nullzero"
+			}
+		}
 		fields = append(fields, Field{
 			Column:   column,
 			GoName:   pascal(column),
@@ -87,6 +97,7 @@ func parseFields(spec string) ([]Field, error) {
 			SQLType:  ct.sqlType,
 			Nullable: nullable,
 			JSON:     isJSON,
+			Tag:      tag,
 		})
 	}
 	return fields, nil

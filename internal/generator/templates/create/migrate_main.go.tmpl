@@ -53,7 +53,7 @@ func run(args []string) error {
 	}
 	defer db.Close()
 
-	m, err := migrate.New(db, migrations.FS)
+	m, err := migrate.New(db.DB, migrations.FS)
 	if err != nil {
 		return err
 	}

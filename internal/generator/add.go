@@ -17,9 +17,16 @@ func componentOutputs(component string) []output {
 	case "postgres":
 		return []output{
 			{"internal/platform/database/database.go", "create/database.go.tmpl"},
-			{"internal/platform/database/orm/orm.go", "create/orm.go.tmpl"},
-			{"internal/platform/database/orm/query.go", "create/query.go.tmpl"},
-			{"internal/platform/database/orm/query_test.go", "create/query_test.go.tmpl"},
+			{"internal/platform/database/orm/orm.go", "create/orm/orm.go.tmpl"},
+			{"internal/platform/database/orm/db.go", "create/orm/db.go.tmpl"},
+			{"internal/platform/database/orm/errors.go", "create/orm/errors.go.tmpl"},
+			{"internal/platform/database/orm/query.go", "create/orm/query.go.tmpl"},
+			{"internal/platform/database/orm/relation.go", "create/orm/relation.go.tmpl"},
+			{"internal/platform/database/orm/repository.go", "create/orm/repository.go.tmpl"},
+			{"internal/platform/database/orm/pagination.go", "create/orm/pagination.go.tmpl"},
+			{"internal/platform/database/orm/tx.go", "create/orm/tx.go.tmpl"},
+			{"internal/platform/database/orm/orm_test.go", "create/orm/orm_test.go.tmpl"},
+			{"internal/platform/database/orm/integration_test.go", "create/orm/integration_test.go.tmpl"},
 			{"migrations/migrations.go", "create/migrations_embed.go.tmpl"},
 			{"internal/platform/database/migrate/migrate.go", "create/migrate.go.tmpl"},
 			{"internal/platform/database/migrate/migrate_test.go", "create/migrate_test.go.tmpl"},
@@ -33,9 +40,9 @@ func componentOutputs(component string) []output {
 
 // componentModules are the Go modules a component needs, at the versions
 // create pins.
-var componentModules = map[string]string{
-	"postgres": "github.com/jackc/pgx/v5@v5.13.0",
-	"redis":    "github.com/redis/go-redis/v9@v9.23.0",
+var componentModules = map[string][]string{
+	"postgres": {"github.com/jackc/pgx/v5@v5.13.0", "github.com/uptrace/bun@v1.3.0", "github.com/uptrace/bun/dialect/pgdialect@v1.3.0"},
+	"redis":    {"github.com/redis/go-redis/v9@v9.23.0"},
 }
 
 // componentEnv are the .env.example lines of a component.
@@ -78,10 +85,10 @@ func Add(p *Project, component string) (*Report, error) {
 	}
 
 	// go get pins the version create uses; go mod tidy then records the
-	// checksums of every package the new files import (pgxpool needs more than
-	// the pgx module root).
+	// checksums of every package the new files import (pgx/stdlib needs more
+	// than the pgx module root).
 	tidied := true
-	for _, args := range [][]string{{"get", componentModules[component]}, {"mod", "tidy"}} {
+	for _, args := range [][]string{append([]string{"get"}, componentModules[component]...), {"mod", "tidy"}} {
 		cmd := exec.Command("go", args...)
 		cmd.Dir = p.Root
 		if out, err := cmd.CombinedOutput(); err != nil {

@@ -44,9 +44,9 @@ func TestParseFields(t *testing.T) {
 	}
 	got := []string{}
 	for _, f := range fields {
-		got = append(got, f.GoName+" "+f.GoType+" "+f.SQLType)
+		got = append(got, f.GoName+" "+f.GoType+" "+f.SQLType+" "+f.Tag)
 	}
-	want := "UserID int64 BIGINT|PaidAt *time.Time TIMESTAMPTZ|Meta json.RawMessage JSONB"
+	want := "UserID int64 BIGINT user_id|PaidAt *time.Time TIMESTAMPTZ paid_at|Meta json.RawMessage JSONB meta,type:jsonb,nullzero"
 	if strings.Join(got, "|") != want {
 		t.Errorf("got %s\nwant %s", strings.Join(got, "|"), want)
 	}
@@ -161,6 +161,9 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 				}
 			}
 			assertNoGortisan(t, project.Root)
+			if has("postgres") {
+				assertORMStandalone(t, project)
+			}
 		})
 	}
 }
@@ -182,6 +185,28 @@ func assertNoGortisan(t *testing.T, root string) {
 	}
 	if strings.Contains(string(out), "gortisan") {
 		t.Errorf("the project depends on gortisan:\n%s", out)
+	}
+}
+
+// assertORMStandalone checks that internal/platform/database/orm could become
+// a module of its own: it imports nothing of the project and only bun, pgx
+// and the standard library from outside it.
+func assertORMStandalone(t *testing.T, p *Project) {
+	t.Helper()
+	orm := p.Module + "/internal/platform/database/orm"
+	cmd := exec.Command("go", "list", "-f", "{{range .Imports}}{{.}} {{end}}", "./internal/platform/database/orm")
+	cmd.Dir = p.Root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, imp := range strings.Fields(string(out)) {
+		first, _, _ := strings.Cut(imp, "/")
+		std := !strings.Contains(first, ".")
+		allowed := strings.HasPrefix(imp, "github.com/uptrace/bun") || strings.HasPrefix(imp, "github.com/jackc/pgx/v5")
+		if (!std && !allowed) || strings.HasPrefix(imp, p.Module+"/") {
+			t.Errorf("%s imports %s; it may import only bun, pgx and the standard library", orm, imp)
+		}
 	}
 }
 

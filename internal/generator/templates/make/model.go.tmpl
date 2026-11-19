@@ -5,24 +5,31 @@ import (
 	"encoding/json"
 {{- end}}
 	"time"
+
+	"github.com/uptrace/bun"
 )
 
-// {{.Type}} is a row of {{.Table}}. Every field with a db tag is a column, and
-// the mapping in repository.go is generated from them (by gortisan run on
-// save, or ./gortisan generate). To add a column, add a field — e.g.
-// Name string `db:"name" json:"name"` — and a migration.
-// db tag options: pk for the primary key, default for a column the database
-// fills (read back, never inserted).
+// {{.Type}} is a row of {{.Table}}. Every field with a bun tag is a column;
+// to add one, add a field — e.g. Name string `bun:"name" json:"name"` — and a
+// migration (./gortisan make:migration add_name_to_{{.Table}}).
 //
-//gortisan:table {{.Table}}
+// Relations are fields too, loaded with orm.With in the repository, e.g.
+//
+//	Items []*Item `bun:"rel:has-many,join:id={{.Name}}_id" json:"items,omitempty"`
+//
+// bun tag options: pk and autoincrement for the primary key; nullzero writes
+// a zero value as NULL (so the database default applies); soft_delete makes
+// Delete set the column instead of removing the row.
 type {{.Type}} struct {
-	ID        int64      `db:"id,pk" json:"id"`
+	bun.BaseModel `bun:"table:{{.Table}}"`
+
+	ID        int64      `bun:"id,pk,autoincrement" json:"id"`
 {{- range .Fields}}
-	{{.GoName}} {{.GoType}} `db:"{{.Column}}" json:"{{.Column}}"`
+	{{.GoName}} {{.GoType}} `bun:"{{.Tag}}" json:"{{.Column}}"`
 {{- end}}
-	CreatedAt time.Time  `db:"created_at,default" json:"created_at"`
-	UpdatedAt time.Time  `db:"updated_at,default" json:"updated_at"`
+	CreatedAt time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 {{- if .SoftDelete}}
-	DeletedAt *time.Time `db:"deleted_at,default" json:"deleted_at,omitempty"`
+	DeletedAt *time.Time `bun:"deleted_at,soft_delete,nullzero" json:"deleted_at,omitempty"`
 {{- end}}
 }

@@ -2,68 +2,60 @@ package {{.Pkg}}
 
 import (
 	"context"
-	"errors"
 
-	"{{.Module}}/internal/platform/database"
 	"{{.Module}}/internal/platform/database/orm"
 )
 
-// Repository reads and writes {{.Table}}.
+// Repository reads and writes {{.Table}}. It implements Store on
+// orm.Repository (bun underneath) and returns this package's errors, so
+// nothing above it depends on the orm.
 type Repository struct {
-	db database.DBTX
+	rows *orm.Repository[{{.Type}}]
 }
 
-func NewRepository(db database.DBTX) *Repository {
-	return &Repository{db: db}
+// NewRepository runs its queries on db: the *bun.DB, or a transaction.
+func NewRepository(db orm.IDB) *Repository {
+	return &Repository{rows: orm.NewRepository[{{.Type}}](db)}
 }
 
-// WithTx returns a copy that runs its queries in tx.
-func (r *Repository) WithTx(tx database.DBTX) *Repository {
-	return &Repository{db: tx}
+// WithTx returns a copy that runs its queries in tx (see orm.InTx).
+func (r *Repository) WithTx(tx orm.IDB) *Repository {
+	return &Repository{rows: r.rows.WithTx(tx)}
 }
 
 // Find returns ErrNotFound when there is no such row.
 func (r *Repository) Find(ctx context.Context, id int64) (*{{.Type}}, error) {
-	m, err := {{.Var}}Table.Find(ctx, r.db, id)
-	return m, notFound(err)
+	m, err := r.rows.Find(ctx, id)
+	return m, orm.MapNotFound(err, ErrNotFound)
 }
 
+// List returns a page of rows, newest first.
 func (r *Repository) List(ctx context.Context, limit, offset int) ([]*{{.Type}}, error) {
-	return {{.Var}}Table.Get(ctx, r.db, orm.All().OrderBy("id DESC").Limit(limit).Offset(offset))
+	return r.rows.Get(ctx, orm.OrderBy("?TableAlias.id DESC"), orm.Limit(limit), orm.Offset(offset))
 }
 
 // Create inserts m and fills its id and timestamps.
 func (r *Repository) Create(ctx context.Context, m *{{.Type}}) error {
-	return {{.Var}}Table.Create(ctx, r.db, m)
+	return r.rows.Create(ctx, m)
 }
 
-// Update writes set, e.g. orm.Set{"name": "..."}, and returns the stored row,
-// or ErrNotFound.
-func (r *Repository) Update(ctx context.Context, id int64, set orm.Set) (*{{.Type}}, error) {
-	m, err := {{.Var}}Table.Update(ctx, r.db, id, set)
-	return m, notFound(err)
+// Update writes m (only columns, when given) and reads the stored row back
+// into it, or returns ErrNotFound.
+func (r *Repository) Update(ctx context.Context, m *{{.Type}}, columns ...string) error {
+	return orm.MapNotFound(r.rows.Update(ctx, m, columns...), ErrNotFound)
 }
 
 {{if .SoftDelete}}// Delete sets deleted_at; the row is then skipped by every query above.{{else}}// Delete removes the row.{{end}}
 func (r *Repository) Delete(ctx context.Context, id int64) error {
-	return notFound({{.Var}}Table.Delete(ctx, r.db, id))
+	return orm.MapNotFound(r.rows.Delete(ctx, id), ErrNotFound)
 }
 
-// notFound turns the storage's "no row" into the domain's ErrNotFound, so
-// callers above the repository never depend on the orm.
-func notFound(err error) error {
-	if errors.Is(err, orm.ErrNotFound) {
-		return ErrNotFound
-	}
-	return err
-}
-
-// Plain SQL works next to the mapper, on the same connection or transaction:
+// More queries are scopes on r.rows, or plain bun on r.rows.DB(), e.g.
 //
 //	func (r *Repository) CountSince(ctx context.Context, since time.Time) (int64, error) {
-//		var n int64
-//		err := r.db.QueryRow(ctx, `SELECT count(*) FROM {{.Table}} WHERE created_at >= $1`, since).Scan(&n)
-//		return n, err
+//		return r.rows.Count(ctx, orm.Where("?TableAlias.created_at >= ?", since))
 //	}
 //
-// The mapping below is generated from {{.Type}}; change the struct, not the mapping.
+// and relations load with orm.With, once the model has the relation field:
+//
+//	m, err := r.rows.Find(ctx, id, orm.With("Items"), orm.With("Items.Statuses"))

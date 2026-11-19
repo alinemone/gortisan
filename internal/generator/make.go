@@ -329,11 +329,6 @@ func makeModel(p *Project, name string, opts MakeOptions, report *Report) error 
 	}, d, opts.Force, report); err != nil {
 		return err
 	}
-	generated, err := Generate(p, GenerateOptions{})
-	report.merge(generated)
-	if err != nil {
-		return err
-	}
 	report.next("create the table: ./gortisan migrate   (migrations/%s_create_%s_table.up.sql)", stamp, d.Table)
 	report.next("then: ./gortisan make:service %s", f.Path)
 	return nil

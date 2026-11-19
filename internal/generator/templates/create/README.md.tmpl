@@ -22,10 +22,10 @@ cmd/api/main.go           builds every dependency in order and starts the HTTP s
 internal/
   domain/                 the business — no HTTP, no Kafka
     user/                 one package per subject; group them when there are many (sales/order)
-      user.go             the struct — the table
+      user.go             the struct — the table, with bun tags
       errors.go           failures in business terms (ErrNotFound…)
       store.go            what the service needs from storage
-      repository.go       implements the store; its table mapping is generated at the end
+      repository.go       implements the store on orm.Repository (bun)
       service.go          the rules — what the API and workers call
   api/                    HTTP
     router.go             /ping, /health, and one line per API version
@@ -35,7 +35,9 @@ internal/
   platform/               infrastructure — no business rules
     config/ server/ validate/ health/
 {{- if .Postgres}}
-    database/ database/orm/
+    database/             opens the database from the config
+    database/orm/         bun over pgx: Repository[T], scopes, relations, transactions
+    database/migrate/     the migration runner of cmd/migrate
 {{- end}}
 {{- if .Redis}}
     cache/
@@ -61,17 +63,39 @@ and `internal/arch_test.go` enforces it, including that `api/v2` never imports
 - **Validation returns every error at once.** `var errs validate.Errors`, then
   `errs.Add(...)` / `errs.Check(ctx, field, rule)`, then `return errs.Err()`.
 {{- if .Postgres}}
-- **Transactions are explicit.** `database.InTx(ctx, db, func(tx pgx.Tx) error { ... })`
+- **Transactions are explicit.** `orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error { ... })`
   and `repo.WithTx(tx)`.
 
 ## The database layer
 
-A model is a struct marked `//gortisan:table <name>`; every field with a `db` tag
-is a column (`db:"id,pk"` for the primary key, `db:"created_at,default"` for a
-column the database fills). Its mapping is generated into the end of the
-package's `repository.go`, between `// gortisan:table <Type> begin` and `end` —
-by `make:model`, by `./gortisan run` on every save, or by `./gortisan generate`.
-To add a column, add a field and a migration. Nothing reads the tags at run time.
+A model is a struct with bun tags ([bun](https://bun.uptrace.dev) over pgx):
+
+```go
+type Invoice struct {
+	bun.BaseModel `bun:"table:invoices"`
+
+	ID        int64     `bun:"id,pk,autoincrement" json:"id"`
+	Number    string    `bun:"number" json:"number"`
+	Items     []*Item   `bun:"rel:has-many,join:id=invoice_id" json:"items,omitempty"`
+	CreatedAt time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+}
+```
+
+The repository uses `orm.Repository[T]` (Find, First, Get, Count, Exists,
+Paginate, Create, CreateMany, Update, Delete, ForceDelete, Restore) with scopes
+(`orm.Where`, `orm.OrderBy`, `orm.Limit`, `orm.With` for relations, ...), and
+returns the domain's own `ErrNotFound`:
+
+```go
+invoice, err := r.rows.Find(ctx, id, orm.With("Items"), orm.With("Items.Statuses"))
+return invoice, orm.MapNotFound(err, ErrNotFound)
+```
+
+Anything else is plain bun: `r.rows.Select(&dest)` or `r.rows.DB().NewSelect()`.
+`internal/platform/database/orm` imports only bun, pgx and the standard
+library, so it can become a module of its own. To add a column, add a field
+and a migration.
 {{- end}}
 
 ## Generate more
