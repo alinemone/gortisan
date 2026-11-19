@@ -42,6 +42,7 @@ type projectData struct {
 	Kafka    bool
 	Metrics  bool
 	Tool     string // ToolPackage@version
+	Version  string // the API version a routes file is for, e.g. v1
 }
 
 // Create writes a new project into dir/name.
@@ -75,18 +76,21 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		Kafka:    with["kafka"],
 		Metrics:  with["metrics"],
 		Tool:     ToolPackage + "@" + toolVersion(opts.Version),
+		Version:  "v1",
 	}
 
 	outputs := []output{
 		{"go.mod", "create/go.mod.tmpl"},
-		{"cmd/" + name + "/main.go", "create/main.go.tmpl"},
-		{"internal/config/config.go", "create/config.go.tmpl"},
-		{"internal/server/server.go", "create/server.go.tmpl"},
-		{"internal/server/server_test.go", "create/server_test.go.tmpl"},
-		{"internal/router/router.go", "create/router.go.tmpl"},
-		{"internal/health/health.go", "create/health.go.tmpl"},
-		{"internal/validate/validate.go", "create/validate.go.tmpl"},
-		{"internal/validate/validate_test.go", "create/validate_test.go.tmpl"},
+		{"cmd/api/main.go", "create/main.go.tmpl"},
+		{"internal/arch_test.go", "create/arch_test.go.tmpl"},
+		{"internal/api/router.go", "create/api_router.go.tmpl"},
+		{"internal/api/v1/routes.go", "create/version_routes.go.tmpl"},
+		{"internal/platform/config/config.go", "create/config.go.tmpl"},
+		{"internal/platform/server/server.go", "create/server.go.tmpl"},
+		{"internal/platform/server/server_test.go", "create/server_test.go.tmpl"},
+		{"internal/platform/health/health.go", "create/health.go.tmpl"},
+		{"internal/platform/validate/validate.go", "create/validate.go.tmpl"},
+		{"internal/platform/validate/validate_test.go", "create/validate_test.go.tmpl"},
 		{".env.example", "create/env.example.tmpl"},
 		{".gitignore", "create/gitignore.tmpl"},
 		{"Dockerfile", "create/Dockerfile.tmpl"},
@@ -99,21 +103,21 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 	}
 	if data.Postgres {
 		outputs = append(outputs,
-			output{"internal/database/database.go", "create/database.go.tmpl"},
-			output{"internal/database/orm/orm.go", "create/orm.go.tmpl"},
-			output{"internal/database/orm/query.go", "create/query.go.tmpl"},
-			output{"internal/database/orm/query_test.go", "create/query_test.go.tmpl"},
+			output{"internal/platform/database/database.go", "create/database.go.tmpl"},
+			output{"internal/platform/database/orm/orm.go", "create/orm.go.tmpl"},
+			output{"internal/platform/database/orm/query.go", "create/query.go.tmpl"},
+			output{"internal/platform/database/orm/query_test.go", "create/query_test.go.tmpl"},
 			output{"migrations/.gitkeep", "create/gitkeep.tmpl"},
 		)
 	}
 	if data.Redis {
-		outputs = append(outputs, output{"internal/cache/redis.go", "create/redis.go.tmpl"})
+		outputs = append(outputs, output{"internal/platform/cache/redis.go", "create/redis.go.tmpl"})
 	}
 	if data.Kafka {
-		outputs = append(outputs, output{"internal/kafka/kafka.go", "create/kafka.go.tmpl"})
+		outputs = append(outputs, output{"internal/platform/kafka/kafka.go", "create/kafka.go.tmpl"})
 	}
 	if data.Metrics {
-		outputs = append(outputs, output{"internal/metrics/metrics.go", "create/metrics.go.tmpl"})
+		outputs = append(outputs, output{"internal/platform/metrics/metrics.go", "create/metrics.go.tmpl"})
 	}
 
 	if err := renderAll(root, outputs, data, false, report); err != nil {
@@ -129,8 +133,8 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		report.next("go mod tidy failed, run it yourself in %s:\n%s", name, strings.TrimSpace(out))
 	}
 	report.next("cd %s && cp .env.example .env", name)
-	report.next("go run ./cmd/%s   # serves on PORT (8080): /ping, /health", name)
-	report.next("./gortisan make:model user, then make:service user and make:handler user/list   # gortisan.bat / gortisan.ps1 on Windows")
+	report.next("./gortisan run   # or go run ./cmd/api; serves on PORT (8080): /ping, /health")
+	report.next("./gortisan make:model user, make:service user, make:handler v1/user/list   # gortisan.bat / gortisan.ps1 on Windows")
 	return report, nil
 }
 

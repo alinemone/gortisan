@@ -41,9 +41,9 @@ type Options struct {
 	BeforeBuild func() error
 }
 
-// ResolveTarget picks the command to run: name when given, otherwise the
-// only directory under cmd/ (ignoring worker), or the one named after the
-// module.
+// ResolveTarget picks the command to run: name when given, otherwise api,
+// the only directory under cmd/ that is not a helper (worker, migrate, seed),
+// or the one named after the module.
 func ResolveTarget(root, module, name string) (string, error) {
 	if name != "" {
 		if _, err := os.Stat(filepath.Join(root, "cmd", name)); err != nil {
@@ -57,11 +57,13 @@ func ResolveTarget(root, module, name string) (string, error) {
 	}
 	var candidates []string
 	for _, e := range entries {
-		if e.IsDir() && e.Name() != "worker" {
+		if e.IsDir() && !helperCommands[e.Name()] {
 			candidates = append(candidates, e.Name())
 		}
 	}
 	switch {
+	case slices.Contains(candidates, "api"):
+		return "api", nil
 	case len(candidates) == 1:
 		return candidates[0], nil
 	case slices.Contains(candidates, path.Base(module)):
@@ -72,6 +74,9 @@ func ResolveTarget(root, module, name string) (string, error) {
 		return "", fmt.Errorf("cmd/ has several commands (%s); pass one", strings.Join(candidates, ", "))
 	}
 }
+
+// helperCommands are not what `gortisan run` starts by default.
+var helperCommands = map[string]bool{"worker": true, "migrate": true, "seed": true}
 
 // Run builds cmd/<Target> and runs it until ctx is done. With Watch it
 // rebuilds and restarts the program whenever a watched file changes; a

@@ -1,0 +1,20 @@
+package {{.Pkg}}
+
+import (
+	"context"
+
+	"{{.Module}}/internal/platform/database/orm"
+)
+
+// Store is what Service needs from storage. Repository implements it; a test
+// can give Service a fake Store and run without a database. Add a method here
+// when the service needs a new query.
+type Store interface {
+	Find(ctx context.Context, id int64) (*{{.Type}}, error)
+	List(ctx context.Context, limit, offset int) ([]*{{.Type}}, error)
+	Create(ctx context.Context, m *{{.Type}}) error
+	Update(ctx context.Context, id int64, set orm.Set) (*{{.Type}}, error)
+	Delete(ctx context.Context, id int64) error
+}
+
+var _ Store = (*Repository)(nil)

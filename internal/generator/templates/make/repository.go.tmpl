@@ -2,9 +2,10 @@ package {{.Pkg}}
 
 import (
 	"context"
+	"errors"
 
-	"{{.Module}}/internal/database"
-	"{{.Module}}/internal/database/orm"
+	"{{.Module}}/internal/platform/database"
+	"{{.Module}}/internal/platform/database/orm"
 )
 
 // Repository reads and writes {{.Table}}.
@@ -21,9 +22,10 @@ func (r *Repository) WithTx(tx database.DBTX) *Repository {
 	return &Repository{db: tx}
 }
 
-// Find returns orm.ErrNotFound when there is no such row.
+// Find returns ErrNotFound when there is no such row.
 func (r *Repository) Find(ctx context.Context, id int64) (*{{.Type}}, error) {
-	return {{.Var}}Table.Find(ctx, r.db, id)
+	m, err := {{.Var}}Table.Find(ctx, r.db, id)
+	return m, notFound(err)
 }
 
 func (r *Repository) List(ctx context.Context, limit, offset int) ([]*{{.Type}}, error) {
@@ -35,14 +37,25 @@ func (r *Repository) Create(ctx context.Context, m *{{.Type}}) error {
 	return {{.Var}}Table.Create(ctx, r.db, m)
 }
 
-// Update writes set, e.g. orm.Set{"name": "..."}, and returns the stored row.
+// Update writes set, e.g. orm.Set{"name": "..."}, and returns the stored row,
+// or ErrNotFound.
 func (r *Repository) Update(ctx context.Context, id int64, set orm.Set) (*{{.Type}}, error) {
-	return {{.Var}}Table.Update(ctx, r.db, id, set)
+	m, err := {{.Var}}Table.Update(ctx, r.db, id, set)
+	return m, notFound(err)
 }
 
 {{if .SoftDelete}}// Delete sets deleted_at; the row is then skipped by every query above.{{else}}// Delete removes the row.{{end}}
 func (r *Repository) Delete(ctx context.Context, id int64) error {
-	return {{.Var}}Table.Delete(ctx, r.db, id)
+	return notFound({{.Var}}Table.Delete(ctx, r.db, id))
+}
+
+// notFound turns the storage's "no row" into the domain's ErrNotFound, so
+// callers above the repository never depend on the orm.
+func notFound(err error) error {
+	if errors.Is(err, orm.ErrNotFound) {
+		return ErrNotFound
+	}
+	return err
 }
 
 // Plain SQL works next to the mapper, on the same connection or transaction:

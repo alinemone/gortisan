@@ -14,8 +14,8 @@ func genProject(t *testing.T, files map[string]string) *Project {
 	t.Helper()
 	root := t.TempDir()
 	all := map[string]string{
-		"go.mod":                       "module example.com/x\n\ngo 1.26\n",
-		"internal/database/orm/orm.go": "package orm\n",
+		"go.mod":                                "module example.com/x\n\ngo 1.26\n",
+		"internal/platform/database/orm/orm.go": "package orm\n",
 	}
 	for rel, content := range files {
 		all[rel] = content
@@ -65,7 +65,7 @@ const orderRepository = `package order
 import (
 	"context"
 
-	"example.com/x/internal/database"
+	"example.com/x/internal/platform/database"
 )
 
 // Repository is written by hand.
@@ -100,7 +100,7 @@ func TestGenerateWritesTheMappingIntoTheRepository(t *testing.T) {
 	src := readFile(t, p, "internal/order/repository.go")
 	for _, want := range []string{
 		"// Repository is written by hand.", // the rest of the file is kept
-		`"example.com/x/internal/database/orm"`,
+		`"example.com/x/internal/platform/database/orm"`,
 		"// gortisan:table Order begin",
 		"var orderTable = orm.Table[Order]{",
 		`Name:       "shop_orders"`,

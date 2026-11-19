@@ -1,0 +1,24 @@
+// Package {{.Version}} is version {{.Version}} of the HTTP API: its routes, and one
+// package per subject (userapi, orderapi, ...) with the handlers, requests
+// and responses of this version.
+package {{.Version}}
+
+import (
+	"github.com/labstack/echo/v4"
+)
+
+// Services are the domain services {{.Version}} calls. main.go passes them in;
+// add a field for each subject this version serves, e.g.
+//
+//	User *user.Service
+type Services struct{}
+
+// Register adds every {{.Version}} route to g (mounted at /{{.Version}}). This
+// file is the full list of the version's endpoints, e.g.
+//
+//	users := userapi.NewHandler(s.User)
+//	g.GET("/users", users.List)
+//	g.GET("/users/:id", users.Get)
+func Register(g *echo.Group, s Services) {
+
+}

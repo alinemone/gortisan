@@ -272,7 +272,7 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 }
 
 func hasORM(p *generator.Project) bool {
-	_, err := os.Stat(filepath.Join(p.Root, "internal", "database", "orm", "orm.go"))
+	_, err := os.Stat(filepath.Join(p.Root, "internal", "platform", "database", "orm", "orm.go"))
 	return err == nil
 }
 
@@ -330,27 +330,32 @@ Usage:
                                         struct into its repository.go
                                         (gortisan run and make:model do it for you)
 
-  gortisan make:<kind> <name> [flags]   add code to the project. Code about one
-                                        subject lives in internal/<feature>:
-    model <feature>                     <feature>.go (struct), repository.go, migration (postgres)
+  gortisan make:<kind> <name> [flags]   add code. A project has four layers:
+        internal/domain/<subject>     the business (subjects can be grouped: sales/order)
+        internal/api/<version>/       HTTP, one package per subject: userapi, orderapi
+        internal/worker/              Kafka consumers
+        internal/platform/            infrastructure
+
+    model <subject>                     <subject>.go, errors.go, store.go, repository.go,
+                                        and a migration (postgres)
         --fields "mobile:string,name:string"   optional; or add db-tagged fields later
-        --table <name>                  (default: plural of <feature>)
+        --table <name>                  (default: plural of <subject>)
         --soft-delete                   add deleted_at
-    service <feature>                   service.go
-    handler <feature>/<action>          a method in handler.go, its input in request.go
-                                        and its output in response.go
-    request <feature>/<name>            a type in request.go
-    response <feature>/<name>           a type in response.go
-    validator <feature>/<name>          a validate.Rule in validator.go
-    enum <feature>/<name> --members <list>   <name>.go, e.g. user/status
+    service <subject>                   service.go, built on the Store
+    handler <version>/<subject>/<action>  e.g. v1/user/list: a method in handler.go,
+                                        its input in request.go, its output in response.go
+    request <version>/<subject>/<name>  a type in request.go
+    response <version>/<subject>/<name> a type in response.go
+    validator <subject>/<name>          a validate.Rule in the domain's validator.go
+    enum <subject>/<name> --members <list>   <name>.go in the domain, e.g. user/status
         --members "pending,paid=5,sent" integers count up from 1 or the previous value
         --type <type>                   string or an integer type (default: int64)
-    cache <feature>/<name> [--type T]   a typed Redis cache in cache.go (redis)
-    worker <feature>/<name>             a Kafka consumer in worker.go, and cmd/worker (kafka)
+    cache <subject>/<name> [--type T]   a typed Redis cache in the domain's cache.go (redis)
+    worker <subject>/<name>             internal/worker/<subject>worker, and cmd/worker (kafka)
         --topic <topic>  --group <group>
-    cdc <feature> [--topic <topic>]     cdc.go, change events of the model (kafka)
-    middleware <name>                   internal/middleware/<name>.go
-    client <name>                       internal/<name>/client.go, an HTTP client
+    cdc <subject> [--topic <topic>]     change events of the model (kafka)
+    middleware <name>                   internal/api/middleware/<name>.go
+    client <name>                       internal/platform/<name>/client.go, an HTTP client
     migration <name>                    empty migrations/<time>_<name>.{up,down}.sql
 
   Files that collect several declarations (handler.go, request.go, ...) are

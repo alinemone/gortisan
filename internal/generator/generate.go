@@ -59,7 +59,7 @@ type GenerateOptions struct {
 // written when their content changes.
 func Generate(p *Project, opts GenerateOptions) (*Report, error) {
 	report := &Report{}
-	if err := p.require("internal/database/orm/orm.go", "generate maps models for the orm of a project created with postgres"); err != nil {
+	if err := p.require(ormPath, "generate maps models for the orm of a project created with postgres"); err != nil {
 		return report, err
 	}
 	byDir, err := readModels(p)
@@ -73,7 +73,13 @@ func Generate(p *Project, opts GenerateOptions) (*Report, error) {
 	}
 	// Repositories that still hold a mapping whose model is gone, so it can
 	// be removed even when the package has no model left.
-	repos, _ := filepath.Glob(filepath.Join(p.Root, "internal", "*", "repository.go"))
+	var repos []string
+	_ = filepath.WalkDir(filepath.Join(p.Root, "internal"), func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && d.Name() == "repository.go" {
+			repos = append(repos, path)
+		}
+		return nil
+	})
 	for _, path := range repos {
 		content, err := os.ReadFile(path)
 		if err != nil || len(regionTypes(content)) == 0 {

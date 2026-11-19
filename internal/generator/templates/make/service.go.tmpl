@@ -1,14 +1,26 @@
 package {{.Pkg}}
+{{- if .HasStore}}
 
-// Service holds the {{.Pkg}} business logic. Its dependencies are passed to
-// NewService in main.go. Methods take a context first and return plain
-// errors; the handler decides which HTTP status an error becomes.
+import "context"
+{{- end}}
+
+// Service holds the {{.Words}} business rules. It is the one entry point the
+// API, the workers and other domains use. Methods take a context first and
+// return plain errors (see errors.go); the caller decides what an error
+// means to its client.
 type Service struct {
-{{- if .HasRepository}}
-	repo *Repository
+{{- if .HasStore}}
+	store Store
 {{- end}}
 }
 
-func NewService({{if .HasRepository}}repo *Repository{{end}}) *Service {
-	return &Service{ {{- if .HasRepository}}repo: repo{{end -}} }
+func NewService({{if .HasStore}}store Store{{end}}) *Service {
+	return &Service{ {{- if .HasStore}}store: store{{end -}} }
 }
+{{- if .HasStore}}
+
+// Find returns ErrNotFound when there is no such {{.Words}}.
+func (s *Service) Find(ctx context.Context, id int64) (*{{.Type}}, error) {
+	return s.store.Find(ctx, id)
+}
+{{- end}}

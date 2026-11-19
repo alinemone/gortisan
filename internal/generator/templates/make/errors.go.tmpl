@@ -1,0 +1,12 @@
+package {{.Pkg}}
+
+import "errors"
+
+// Errors the {{.Pkg}} domain returns. They describe what went wrong in
+// business terms; the API decides which HTTP status each one becomes, so the
+// domain never knows about HTTP. Add more as the rules grow, e.g.
+//
+//	ErrMobileTaken = errors.New("mobile is already taken")
+var (
+	ErrNotFound = errors.New("{{.Words}} not found")
+)

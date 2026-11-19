@@ -1,7 +1,7 @@
-// Command {{.Name}} runs the {{.Title}} HTTP service.
+// Command api runs the {{.Title}} HTTP service.
 //
 // Every dependency is built here, in order, and handed to whoever needs it:
-// config -> connections -> repositories -> services -> handlers -> routes.
+// config -> connections -> domain services -> api versions -> routes.
 // Nothing is looked up from a context or a registry.
 package main
 
@@ -13,24 +13,25 @@ import (
 	"os/signal"
 	"syscall"
 
-	"{{.Module}}/internal/config"
+	"{{.Module}}/internal/api"
+	v1 "{{.Module}}/internal/api/v1"
+	"{{.Module}}/internal/platform/config"
 {{- if .Redis}}
-	"{{.Module}}/internal/cache"
+	"{{.Module}}/internal/platform/cache"
 {{- end}}
 {{- if .Postgres}}
-	"{{.Module}}/internal/database"
+	"{{.Module}}/internal/platform/database"
 {{- end}}
-	"{{.Module}}/internal/health"
+	"{{.Module}}/internal/platform/health"
 {{- if .Metrics}}
-	"{{.Module}}/internal/metrics"
+	"{{.Module}}/internal/platform/metrics"
 {{- end}}
-	"{{.Module}}/internal/router"
-	"{{.Module}}/internal/server"
+	"{{.Module}}/internal/platform/server"
 )
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("{{.Name}} stopped", "error", err)
+		slog.Error("api stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -74,19 +75,21 @@ func run() error {
 	//
 	// Workers run in their own process: go run ./cmd/worker <name>.
 {{end}}
-	// Each feature is built here, from the bottom up, e.g.
+	// Domain services are built here, from the bottom up, and given to the
+	// api versions that use them, e.g.
 	//
 	//	users := user.NewService(user.NewRepository(db))
-	//	handlers.User = user.NewHandler(users)
-	handlers := router.Handlers{
+	//	... V1: v1.Services{User: users}
+	routes := api.Routes{
 		Health: health.NewHandler({{if .Postgres}}db{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}rdb{{end}}),
 {{- if .Metrics}}
 		Metrics: m.Handler(cfg.MetricsSecret),
 {{- end}}
+		V1: v1.Services{},
 	}
 
 	e := server.New(logger{{if .Metrics}}, m.Middleware(){{end}})
-	router.Register(e, handlers)
+	api.Register(e, routes)
 
 	logger.Info("listening", "addr", ":"+cfg.Port)
 	return server.Run(ctx, e, ":"+cfg.Port, cfg.ShutdownTimeout)

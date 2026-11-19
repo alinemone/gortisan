@@ -7,8 +7,8 @@ imports gortisan, and gortisan is not in `go.mod`. Change anything.
 
 ```bash
 cp .env.example .env
-./gortisan run               # builds, runs, and restarts on every change
-                             # (or: go run ./cmd/{{.Name}})
+./gortisan run               # builds cmd/api, runs it, restarts on every change
+                             # (or: go run ./cmd/api)
 curl localhost:8080/ping     # {"ping":"pong"}
 curl localhost:8080/health   # {"status":"pass","checks":{...}}
 {{- if .Metrics}}
@@ -17,56 +17,59 @@ curl localhost:8080/metrics  # Prometheus; set METRICS_SECRET to require a beare
 ```
 {{- if .Kafka}}
 
-Workers run in their own process: `./gortisan run worker -- <feature>.<name>` or
-`go run ./cmd/worker <feature>.<name>`.
+Workers run in their own process: `./gortisan run worker -- <subject>.<name>` or
+`go run ./cmd/worker <subject>.<name>`.
 {{- end}}
 
 ## Layout
 
-The layout the Go team recommends for servers
-([go.dev/doc/modules/layout](https://go.dev/doc/modules/layout#server-project)):
-commands in `cmd/`, the rest in `internal/`. Each subject is one package with
-focused files, not one package per layer:
-
 ```
-cmd/{{.Name}}/main.go       builds every dependency in order and starts the server
+cmd/api/main.go           builds every dependency in order and starts the HTTP service
 internal/
-  user/                 one package per subject (make:model user, make:handler user/list…)
-    user.go             the struct — the table
-    repository.go       reads and writes the table; its mapping is generated at the end
-    service.go          business logic
-    handler.go          HTTP endpoints
-    request.go          inputs, with Validate
-    response.go         outputs
-  config/               environment variables (and .env) → Config
-  server/               echo: request log, panic recovery, JSON errors, graceful shutdown
-  router/               every route, in one file
-  health/               /ping and /health
-  validate/             field errors → one 422
+  domain/                 the business — no HTTP, no Kafka
+    user/                 one package per subject; group them when there are many (sales/order)
+      user.go             the struct — the table
+      errors.go           failures in business terms (ErrNotFound…)
+      store.go            what the service needs from storage
+      repository.go       implements the store; its table mapping is generated at the end
+      service.go          the rules — what the API and workers call
+  api/                    HTTP
+    router.go             /ping, /health{{if .Metrics}}, /metrics{{end}}, and one line per API version
+    v1/routes.go          every v1 endpoint
+    v1/userapi/           handler.go, request.go (inputs), response.go (outputs)
+{{- if .Kafka}}
+  worker/                 Kafka consumers
+{{- end}}
+  platform/               infrastructure — no business rules
+    config/ server/ validate/ health/
 {{- if .Postgres}}
-  database/             the PostgreSQL pool, DBTX and InTx
-  database/orm/         a small mapper from structs to tables (optional)
+    database/ database/orm/
 {{- end}}
 {{- if .Redis}}
-  cache/                the Redis client
+    cache/
 {{- end}}
 {{- if .Kafka}}
-  kafka/                Kafka readers, writers and Publish
+    kafka/
 {{- end}}
 {{- if .Metrics}}
-  metrics/              Prometheus metrics and /metrics
+    metrics/
 {{- end}}
+  arch_test.go            fails `go test` when a layer imports the wrong way
 {{- if .Postgres}}
-migrations/             SQL migrations, *.up.sql / *.down.sql
+migrations/               SQL migrations, *.up.sql / *.down.sql
 {{- end}}
 ```
+
+Dependencies point one way — `api`{{if .Kafka}}, `worker`{{end}} → `domain` → `platform` —
+and `internal/arch_test.go` enforces it, including that `api/v2` never imports
+`api/v1`.
 
 ## Rules
 
 - **Dependencies are passed, not looked up.** Constructors take what they need;
-  `main.go` wires them. No globals, no values hidden in `context.Context`.
-- **Errors carry the status.** A handler returns `echo.NewHTTPError(code, "message")`
-  for a client error; any other error becomes a 500 and is logged.
+  `cmd/api/main.go` wires them. No globals, no values hidden in `context.Context`.
+- **The domain names its errors** (`user.ErrNotFound`); the handler decides the
+  HTTP status. Any other error becomes a 500 and is logged.
 - **Validation returns every error at once.** `var errs validate.Errors`, then
   `errs.Add(...)` / `errs.Check(ctx, field, rule)`, then `return errs.Err()`.
 {{- if .Postgres}}
@@ -80,42 +83,31 @@ is a column (`db:"id,pk"` for the primary key, `db:"created_at,default"` for a
 column the database fills). Its mapping is generated into the end of the
 package's `repository.go`, between `// gortisan:table <Type> begin` and `end` —
 by `make:model`, by `./gortisan run` on every save, or by `./gortisan generate`.
-To add a column, add a field and a migration. Nothing reads the tags at run
-time. Using the mapper is optional:
-
-```go
-// with the mapper
-u, err := userTable.Find(ctx, r.db, id)
-users, err := userTable.Get(ctx, r.db, orm.Where("mobile LIKE ?", "0912%").OrderBy("id DESC").Limit(20))
-
-// plain SQL, same connection or transaction
-var n int64
-err := r.db.QueryRow(ctx, `SELECT count(*) FROM users WHERE created_at >= $1`, since).Scan(&n)
-```
-
-To drop the mapper, rewrite the repository methods with SQL and delete
-`internal/database/orm`.
+To add a column, add a field and a migration. Nothing reads the tags at run time.
 {{- end}}
 
 ## Generate more
 
 `./gortisan` (`gortisan.bat` or `.\gortisan.ps1` on Windows) runs the gortisan
 version this project was created with, through `go run`. It is not a dependency:
-no code imports it and `go.mod` does not list it. Delete the three scripts if you
-do not want them.
+no code imports it and `go.mod` does not list it.
 
 ```bash
 ./gortisan list                                   # every command and flag
 {{- if .Postgres}}
-./gortisan make:model user                        # internal/user: user.go, repository.go + a migration
-./gortisan make:migration add_index_to_users
+./gortisan make:model user                        # internal/domain/user + a migration
+./gortisan make:model sales/order                 # a grouped subject
 {{- end}}
-./gortisan make:service user                      # internal/user/service.go
-./gortisan make:handler user/list                 # handler.go + ListRequest + ListResponse
+./gortisan make:service user                      # internal/domain/user/service.go
+./gortisan make:handler v1/user/list              # internal/api/v1/userapi: handler + ListRequest + ListResponse
+./gortisan make:handler v2/user/list              # a second API version
 ./gortisan make:enum user/status --members "active,blocked"
 ./gortisan make:validator user/mobile_free
 ./gortisan make:middleware request_id
 ./gortisan make:client payment
+{{- if .Postgres}}
+./gortisan make:migration add_index_to_users
+{{- end}}
 {{- if .Redis}}
 ./gortisan make:cache user/profile --type "*User"
 {{- end}}

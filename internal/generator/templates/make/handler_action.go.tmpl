@@ -6,9 +6,9 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// {{.Action}} is registered in internal/router/router.go, e.g.
+// {{.Action}} is registered in internal/api/{{.Version}}/routes.go, e.g.
 //
-//	v1.GET("{{.Route}}", h.{{.Field}}.{{.Action}})
+//	g.{{.Method}}("{{.Path}}", {{.Var}}.{{.Action}})
 func (h *Handler) {{.Action}}(c echo.Context) error {
 	ctx := c.Request().Context()
 	var req {{.Action}}Request
@@ -19,11 +19,11 @@ func (h *Handler) {{.Action}}(c echo.Context) error {
 		return err
 	}
 
-	// Call the service and write {{.Action}}Response, e.g.
+	// Call the domain and write {{.Action}}Response, e.g.
 	//
-	//	result, err := h.service.Something(ctx, ...)
-	//	if errors.Is(err, orm.ErrNotFound) {
-	//		return echo.NewHTTPError(http.StatusNotFound, "not found")
+	//	result, err := h.service.Find(ctx, req.ID)
+	//	if errors.Is(err, {{.DomainPkg}}.ErrNotFound) {
+	//		return echo.NewHTTPError(http.StatusNotFound, "{{.Words}} not found")
 	//	}
 	//	return c.JSON(http.StatusOK, {{.Action}}Response{...})
 	return echo.NewHTTPError(http.StatusNotImplemented)

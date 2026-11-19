@@ -98,11 +98,13 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 			}
 			steps := []step{
 				{kind: "service", name: "order"},
-				{kind: "handler", name: "order/list"},
-				{kind: "handler", name: "order/get"},
-				{kind: "handler", name: "user/list"}, // a feature with only a handler
-				{kind: "request", name: "order/create"},
-				{kind: "response", name: "order/detail"},
+				{kind: "handler", name: "v1/order/list"},
+				{kind: "handler", name: "v1/order/get"},
+				{kind: "handler", name: "v2/order/list"}, // a second API version
+				{kind: "handler", name: "v1/user/list"},  // a subject with only a handler
+				{kind: "handler", name: "v1/sales/invoice/list"},
+				{kind: "request", name: "v1/order/create"},
+				{kind: "response", name: "v1/order/detail"},
 				{kind: "validator", name: "order/not_paid"},
 				{kind: "enum", name: "order/status", opts: MakeOptions{Members: "pending,paid=5,sent"}},
 				{kind: "enum", name: "order/currency", opts: MakeOptions{Type: "string", Members: "irr,usd=USD"}},
@@ -113,8 +115,11 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 				steps = append(steps,
 					step{kind: "model", name: "order", opts: MakeOptions{Fields: "user_id:int64,status:string,paid_at:time?,meta:json", SoftDelete: true}},
 					step{kind: "model", name: "tag"},
-					step{kind: "service", name: "tag"}, // after the model: wired to the repository
-					step{kind: "handler", name: "tag/list"},
+					step{kind: "service", name: "tag"}, // after the model: built on the Store
+					step{kind: "handler", name: "v1/tag/list"},
+					step{kind: "model", name: "sales/payment"}, // a grouped subject
+					step{kind: "service", name: "sales/payment"},
+					step{kind: "handler", name: "v1/sales/payment/get"},
 					step{kind: "migration", name: "add_index"},
 				)
 			}
@@ -130,7 +135,7 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 					step{kind: "worker", name: "order/paid", opts: MakeOptions{Topic: "orders.paid"}},
 				)
 				if has("postgres") {
-					steps = append(steps, step{kind: "cdc", name: "order"}, step{kind: "cdc", name: "tag"})
+					steps = append(steps, step{kind: "cdc", name: "order"}, step{kind: "cdc", name: "sales/payment"})
 				}
 			}
 			for _, s := range steps {
@@ -194,7 +199,7 @@ func TestMakeKeepsExistingFiles(t *testing.T) {
 	if _, err := Make(project, "service", "order", MakeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "internal", "order", "service.go")
+	path := filepath.Join(root, "internal", "domain", "order", "service.go")
 	if err := os.WriteFile(path, []byte("package order // edited\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -270,14 +275,35 @@ func TestParseMembers(t *testing.T) {
 	}
 }
 
-func TestSplitFeature(t *testing.T) {
-	f, item, err := splitFeature("handler", "order_item/list_all")
-	if err != nil || f.Pkg != "orderitem" || f.Dir != "internal/orderitem" || f.Type != "OrderItem" || item != "list_all" {
-		t.Fatalf("got %+v %q %v", f, item, err)
+func TestSplitNames(t *testing.T) {
+	f, item, err := splitItem("enum", "sales/order_item/status")
+	if err != nil || f.Path != "sales/orderitem" || f.Pkg != "orderitem" || f.Parent != "sales" || f.Type != "OrderItem" || item != "status" {
+		t.Fatalf("splitItem: %+v %q %v", f, item, err)
 	}
-	for _, bad := range []string{"list", "a/b/c", "config/list", "user/1x"} {
-		if _, _, err := splitFeature("handler", bad); err == nil {
-			t.Errorf("splitFeature(%q): want an error", bad)
+	if f.Dir() != "internal/domain/sales/orderitem" || f.Label() != "sales.orderitem" {
+		t.Fatalf("dir %q label %q", f.Dir(), f.Label())
+	}
+	version, f, item, err := splitAPI("handler", "v2/sales/order/list")
+	if err != nil || version != "v2" || f.Path != "sales/order" || item != "list" {
+		t.Fatalf("splitAPI: %q %+v %q %v", version, f, item, err)
+	}
+	if dir, pkg := apiPackage(version, f); dir != "internal/api/v2/sales/orderapi" || pkg != "orderapi" {
+		t.Fatalf("apiPackage = %q %q", dir, pkg)
+	}
+	for _, bad := range []string{"user/list", "x1/user/list", "v1/list", "v1/user/1x", "v1/type/list"} {
+		if _, _, _, err := splitAPI("handler", bad); err == nil {
+			t.Errorf("splitAPI(%q): want an error", bad)
+		}
+	}
+}
+
+func TestRouteFor(t *testing.T) {
+	for action, want := range map[string]string{
+		"List": "GET /users", "Get": "GET /users/:id", "Create": "POST /users",
+		"Update": "PUT /users/:id", "Delete": "DELETE /users/:id", "ResetPassword": "GET /users/reset-password",
+	} {
+		if m, p := routeFor(action, "/users"); m+" "+p != want {
+			t.Errorf("routeFor(%q) = %s %s, want %s", action, m, p, want)
 		}
 	}
 }
@@ -288,13 +314,13 @@ func TestHandlerAppendsToFeatureFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := FindProject(root)
-	for _, name := range []string{"user/list", "user/get"} {
+	for _, name := range []string{"v1/user/list", "v1/user/get"} {
 		if _, err := Make(p, "handler", name, MakeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	read := func(name string) string {
-		b, _ := os.ReadFile(filepath.Join(root, "internal", "user", name))
+		b, _ := os.ReadFile(filepath.Join(root, "internal", "api", "v1", "userapi", name))
 		return string(b)
 	}
 	for file, wants := range map[string][]string{
@@ -310,12 +336,12 @@ func TestHandlerAppendsToFeatureFiles(t *testing.T) {
 	}
 	// Making the same handler again changes nothing and says so.
 	before := read("handler.go")
-	report, err := Make(p, "handler", "user/list", MakeOptions{})
+	report, err := Make(p, "handler", "v1/user/list", MakeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if read("handler.go") != before || len(report.Skipped) != 3 {
-		t.Fatalf("second make:handler user/list changed files or did not report them: %+v", report)
+		t.Fatalf("second make:handler v1/user/list changed files or did not report them: %+v", report)
 	}
 }
 
