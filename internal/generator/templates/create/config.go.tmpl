@@ -25,6 +25,12 @@ type Config struct {
 {{- if .Redis}}
 	Redis           Redis
 {{- end}}
+{{- if .Kafka}}
+	Kafka           Kafka
+{{- end}}
+{{- if .Metrics}}
+	MetricsSecret   string // /metrics requires "Authorization: Bearer <secret>" when set
+{{- end}}
 }
 {{- if .Postgres}}
 
@@ -49,6 +55,13 @@ type Redis struct {
 	Addr     string
 	Password string
 	DB       int
+}
+{{- end}}
+{{- if .Kafka}}
+
+// Kafka is the Kafka cluster.
+type Kafka struct {
+	Brokers []string
 }
 {{- end}}
 
@@ -85,6 +98,14 @@ func Load() (Config, error) {
 			DB:       r.integer("REDIS_DB", 0),
 		},
 {{- end}}
+{{- if .Kafka}}
+		Kafka: Kafka{
+			Brokers: r.list("KAFKA_BROKERS", []string{"localhost:9092"}),
+		},
+{{- end}}
+{{- if .Metrics}}
+		MetricsSecret: r.str("METRICS_SECRET", ""),
+{{- end}}
 	}
 	return cfg, errors.Join(r.errs...)
 }
@@ -100,6 +121,21 @@ func (r *reader) str(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// list reads a comma-separated value.
+func (r *reader) list(key string, fallback []string) []string {
+	value, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	var items []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }
 
 func (r *reader) integer(key string, fallback int) int {

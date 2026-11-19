@@ -1,0 +1,53 @@
+package validate
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"testing"
+
+	"github.com/labstack/echo/v4"
+)
+
+type rule struct {
+	ok  bool
+	err error
+}
+
+func (r rule) Passes(context.Context) (bool, error) { return r.ok, r.err }
+func (r rule) Message() string                       { return "is not allowed" }
+
+func TestErrors(t *testing.T) {
+	var errs Errors
+	if errs.Err() != nil {
+		t.Fatal("no errors must give a nil error")
+	}
+
+	errs.Add("quantity", "must be positive")
+	if err := errs.Check(context.Background(), "status", rule{ok: false}); err != nil {
+		t.Fatal(err)
+	}
+	if err := errs.Check(context.Background(), "name", rule{ok: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	var httpErr *echo.HTTPError
+	if !errors.As(errs.Err(), &httpErr) || httpErr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("want a 422, got %v", errs.Err())
+	}
+	body := httpErr.Message.(Body)
+	if len(body.Errors) != 2 || body.Errors[1].Field != "status" {
+		t.Fatalf("errors = %+v", body.Errors)
+	}
+}
+
+func TestCheckReturnsRuleFailure(t *testing.T) {
+	var errs Errors
+	boom := errors.New("database is down")
+	if err := errs.Check(context.Background(), "x", rule{err: boom}); !errors.Is(err, boom) {
+		t.Fatalf("err = %v", err)
+	}
+	if !errs.Empty() {
+		t.Fatal("a rule that could not run must not record a field error")
+	}
+}

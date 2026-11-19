@@ -1,0 +1,53 @@
+package enum
+
+import "fmt"
+
+// {{.Type}} is an enumeration. Its values are written out below; add one by
+// adding a constant and listing it in {{.Plural}}() and names{{.Type}}.
+type {{.Type}} {{.Base}}
+
+const (
+{{- range .Members}}
+	{{$.Type}}{{.Name}} {{$.Type}} = {{.Value}}
+{{- end}}
+)
+
+// {{.Plural}} returns every value, in order.
+func {{.Plural}}() []{{.Type}} {
+	return []{{.Type}}{
+{{- range .Members}}
+		{{$.Type}}{{.Name}},
+{{- end}}
+	}
+}
+
+var names{{.Type}} = map[{{.Type}}]string{
+{{- range .Members}}
+	{{$.Type}}{{.Name}}: "{{.Label}}",
+{{- end}}
+}
+
+// String returns the name of v, e.g. "{{(index .Members 0).Label}}".
+func (v {{.Type}}) String() string {
+	if name, ok := names{{.Type}}[v]; ok {
+		return name
+	}
+	return fmt.Sprintf("{{.Type}}(%v)", {{.Base}}(v))
+}
+
+// Valid reports whether v is one of the values above.
+func (v {{.Type}}) Valid() bool {
+	_, ok := names{{.Type}}[v]
+	return ok
+}
+
+// Parse{{.Type}} returns the value named name.
+func Parse{{.Type}}(name string) ({{.Type}}, error) {
+	for v, n := range names{{.Type}} {
+		if n == name {
+			return v, nil
+		}
+	}
+	var zero {{.Type}}
+	return zero, fmt.Errorf("unknown {{.Type}} %q", name)
+}

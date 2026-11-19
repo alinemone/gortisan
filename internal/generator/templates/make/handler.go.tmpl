@@ -1,19 +1,27 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+
+	"{{.Module}}/internal/validate"
 )
 
 // {{.TypeName}}Request is the input of {{.Method}}. c.Bind fills it from the path
 // (`param:"id"`), the query string (`query:"page"`) and the JSON body (`json:"name"`).
+// For a request shared by several handlers, use `gortisan make:request`.
 type {{.TypeName}}Request struct{}
 
-// Validate checks the request after binding.
-func (r *{{.TypeName}}Request) Validate() error {
-	// e.g. if r.ID <= 0 { return echo.NewHTTPError(http.StatusUnprocessableEntity, "id must be positive") }
-	return nil
+// Validate checks the request after binding and returns a 422 listing every
+// invalid field, or nil.
+func (r *{{.TypeName}}Request) Validate(ctx context.Context) error {
+	var errs validate.Errors
+	// if r.ID <= 0 {
+	// 	errs.Add("id", "must be positive")
+	// }
+	return errs.Err()
 }
 
 // {{.TypeName}}Response is the output of {{.Method}}.
@@ -23,17 +31,18 @@ type {{.TypeName}}Response struct{}
 //
 //	v1.GET("{{.Route}}", h.{{.Field}}.{{.Method}})
 func (h *{{.Handler}}) {{.Method}}(c echo.Context) error {
+	ctx := c.Request().Context()
 	var req {{.TypeName}}Request
 	if err := c.Bind(&req); err != nil {
 		return err
 	}
-	if err := req.Validate(); err != nil {
+	if err := req.Validate(ctx); err != nil {
 		return err
 	}
 
 	// Call a service here and map its result to {{.TypeName}}Response:
 	//
-	//	result, err := h.service.Do(c.Request().Context(), ...)
+	//	result, err := h.service.Do(ctx, ...)
 	//	if errors.Is(err, orm.ErrNotFound) {
 	//		return echo.NewHTTPError(http.StatusNotFound, "not found")
 	//	}

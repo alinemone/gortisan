@@ -1,0 +1,46 @@
+package cdc
+
+import (
+	"context"
+
+	kafkago "github.com/segmentio/kafka-go"
+
+	"{{.Module}}/internal/model"
+)
+
+const {{.Type}}Topic = "{{.Topic}}"
+
+// {{.Type}}Data is what consumers see of a {{.Model}}. List only the fields
+// they need; a change to any other field publishes nothing.
+type {{.Type}}Data struct {
+	ID int64 `json:"id"`
+}
+
+func {{.Var}}Data(m *model.{{.Model}}) {{.Type}}Data {
+	return {{.Type}}Data{
+		ID: m.ID,
+	}
+}
+
+// {{.Type}} publishes changes of model.{{.Model}} to {{.Topic}}. Call it after
+// the transaction commits.
+type {{.Type}} struct {
+	writer *kafkago.Writer
+}
+
+func New{{.Type}}(writer *kafkago.Writer) *{{.Type}} {
+	return &{{.Type}}{writer: writer}
+}
+
+func (c *{{.Type}}) Created(ctx context.Context, m *model.{{.Model}}) error {
+	return publish(ctx, c.writer, {{.Type}}Topic, m.ID, Insert, nil, {{.Var}}Data(m))
+}
+
+// Updated publishes nothing when no field of {{.Type}}Data changed.
+func (c *{{.Type}}) Updated(ctx context.Context, before, after *model.{{.Model}}) error {
+	return publish(ctx, c.writer, {{.Type}}Topic, after.ID, Update, {{.Var}}Data(before), {{.Var}}Data(after))
+}
+
+func (c *{{.Type}}) Deleted(ctx context.Context, m *model.{{.Model}}) error {
+	return publish(ctx, c.writer, {{.Type}}Topic, m.ID, Delete, {{.Var}}Data(m), nil)
+}

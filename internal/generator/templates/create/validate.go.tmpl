@@ -1,0 +1,79 @@
+// Package validate collects field errors and turns them into one 422.
+//
+//	var errs validate.Errors
+//	if r.Quantity <= 0 {
+//		errs.Add("quantity", "must be positive")
+//	}
+//	if err := errs.Check(ctx, "order_id", validator.NewOrderNotPaid(orders, r.OrderID)); err != nil {
+//		return err // the rule itself failed, e.g. the database is down
+//	}
+//	return errs.Err() // nil, or 422 {"message": "...", "errors": [{"field": ..., "message": ...}]}
+package validate
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+)
+
+// Rule is one named check, such as those written by `gortisan make:validator`.
+type Rule interface {
+	// Passes reports whether the value is valid. An error means the check
+	// could not run, not that the value is invalid.
+	Passes(ctx context.Context) (bool, error)
+	// Message explains a failure to the client.
+	Message() string
+}
+
+// FieldError is one invalid field.
+type FieldError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
+// Body is the JSON body of a validation failure.
+type Body struct {
+	Message string       `json:"message"`
+	Errors  []FieldError `json:"errors"`
+}
+
+// Errors collects field errors. The zero value is ready to use.
+type Errors struct {
+	fields []FieldError
+}
+
+// Add records that field is invalid.
+func (e *Errors) Add(field, message string) {
+	e.fields = append(e.fields, FieldError{Field: field, Message: message})
+}
+
+// Check runs rule and records its message under field when it does not pass.
+// It returns an error only when the rule could not run.
+func (e *Errors) Check(ctx context.Context, field string, rule Rule) error {
+	ok, err := rule.Passes(ctx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		e.Add(field, rule.Message())
+	}
+	return nil
+}
+
+// Empty reports whether no error was recorded.
+func (e *Errors) Empty() bool {
+	return len(e.fields) == 0
+}
+
+// Err returns nil when no error was recorded, otherwise a 422 whose body
+// lists every field error.
+func (e *Errors) Err() error {
+	if e.Empty() {
+		return nil
+	}
+	return echo.NewHTTPError(http.StatusUnprocessableEntity, Body{
+		Message: "The given data was invalid.",
+		Errors:  e.fields,
+	})
+}

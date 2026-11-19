@@ -1,0 +1,47 @@
+// Package kafka opens Kafka readers and writers with the service settings.
+package kafka
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	kafkago "github.com/segmentio/kafka-go"
+
+	"{{.Module}}/internal/config"
+)
+
+// NewWriter returns a writer for any topic; pass the topic on each message.
+// Messages with the same key go to the same partition. Close it on shutdown.
+func NewWriter(cfg config.Kafka) *kafkago.Writer {
+	return &kafkago.Writer{
+		Addr:         kafkago.TCP(cfg.Brokers...),
+		Balancer:     &kafkago.Hash{},
+		RequiredAcks: kafkago.RequireAll,
+	}
+}
+
+// NewReader returns a reader of topic in consumer group group. It joins the
+// group as soon as it is created, so create only the readers you run, and
+// close them when done.
+func NewReader(cfg config.Kafka, topic, group string) *kafkago.Reader {
+	return kafkago.NewReader(kafkago.ReaderConfig{
+		Brokers:  cfg.Brokers,
+		Topic:    topic,
+		GroupID:  group,
+		MinBytes: 1,
+		MaxBytes: 10 << 20,
+	})
+}
+
+// Publish sends value as JSON to topic under key.
+func Publish(ctx context.Context, w *kafkago.Writer, topic, key string, value any) error {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("kafka: encode message for %s: %w", topic, err)
+	}
+	if err := w.WriteMessages(ctx, kafkago.Message{Topic: topic, Key: []byte(key), Value: body}); err != nil {
+		return fmt.Errorf("kafka: publish to %s: %w", topic, err)
+	}
+	return nil
+}

@@ -1,0 +1,23 @@
+package middleware
+
+import (
+	"github.com/labstack/echo/v4"
+)
+
+// {{.Func}} is an echo middleware. Give it what it needs as arguments and
+// register it in internal/router/router.go:
+//
+//	e.Use(middleware.{{.Func}}())          // every route
+//	v1.Use(middleware.{{.Func}}())         // a group
+//	v1.GET("/x", h.X, middleware.{{.Func}}()) // one route
+func {{.Func}}() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Before the handler. Return an error to stop here, e.g.
+			// return echo.NewHTTPError(http.StatusForbidden, "...")
+			err := next(c)
+			// After the handler.
+			return err
+		}
+	}
+}

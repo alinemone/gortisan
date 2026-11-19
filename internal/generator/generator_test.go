@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -63,8 +64,12 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads modules")
 	}
-	for _, with := range []string{"all", "postgres", "redis", "none"} {
-		t.Run(with, func(t *testing.T) {
+	for _, with := range []string{"all", "", "postgres", "redis", "kafka", "none"} {
+		name := with
+		if name == "" {
+			name = "default"
+		}
+		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			if _, err := Create(dir, "demo-svc", CreateOptions{Module: "example.com/demo-svc", With: with}); err != nil {
 				t.Fatal(err)
@@ -76,23 +81,70 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 			if project.Module != "example.com/demo-svc" {
 				t.Fatalf("module = %q", project.Module)
 			}
+			has := func(component string) bool {
+				switch with {
+				case "all":
+					return true
+				case "":
+					return slices.Contains(DefaultComponents, component)
+				}
+				return slices.Contains(strings.Split(with, ","), component)
+			}
+
 			now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-			makes := [][2]string{{"handler", "order/get_order"}, {"handler", "user/list"}, {"service", "order"}}
-			if with == "all" || with == "postgres" {
-				makes = append(makes, [2]string{"model", "order"}, [2]string{"model", "tag"}, [2]string{"migration", "add_index"})
+			type step struct {
+				kind, name string
+				opts       MakeOptions
 			}
-			for _, m := range makes {
-				opts := MakeOptions{Now: now}
-				if m[0] == "model" && m[1] == "order" {
-					opts.Fields, opts.SoftDelete = "user_id:int64,status:string,paid_at:time?,meta:json", true
-				}
-				if _, err := Make(project, m[0], m[1], opts); err != nil {
-					t.Fatalf("make %s %s: %v", m[0], m[1], err)
+			steps := []step{
+				{kind: "handler", name: "order/get_order"},
+				{kind: "handler", name: "user/list"},
+				{kind: "service", name: "order"},
+				{kind: "middleware", name: "request_id"},
+				{kind: "request", name: "order/create_order"},
+				{kind: "request", name: "ping"},
+				{kind: "response", name: "order/order_detail"},
+				{kind: "validator", name: "order/not_paid"},
+				{kind: "enum", name: "order_status", opts: MakeOptions{Members: "pending,paid=5,sent"}},
+				{kind: "enum", name: "currency", opts: MakeOptions{Type: "string", Members: "irr,usd=USD"}},
+				{kind: "client", name: "salam-pay"},
+			}
+			if has("postgres") {
+				steps = append(steps,
+					step{kind: "model", name: "order", opts: MakeOptions{Fields: "user_id:int64,status:string,paid_at:time?,meta:json", SoftDelete: true}},
+					step{kind: "model", name: "tag"},
+					step{kind: "migration", name: "add_index"},
+				)
+			}
+			if has("redis") {
+				steps = append(steps, step{kind: "cache", name: "vendor_order_count", opts: MakeOptions{Type: "int64"}})
+				if has("postgres") {
+					steps = append(steps, step{kind: "cache", name: "order", opts: MakeOptions{Type: "*model.Order"}})
 				}
 			}
-			if with == "redis" || with == "none" {
-				if _, err := Make(project, "model", "order", MakeOptions{}); err == nil {
-					t.Error("make model without postgres: want an error")
+			if has("kafka") {
+				steps = append(steps,
+					step{kind: "worker", name: "send_notifications", opts: MakeOptions{Group: "notification_worker"}},
+					step{kind: "worker", name: "order_paid", opts: MakeOptions{Topic: "orders.paid"}},
+				)
+				if has("postgres") {
+					steps = append(steps, step{kind: "cdc", name: "order"}, step{kind: "cdc", name: "tag"})
+				}
+			}
+			for _, s := range steps {
+				s.opts.Now = now
+				if _, err := Make(project, s.kind, s.name, s.opts); err != nil {
+					t.Fatalf("make %s %s: %v", s.kind, s.name, err)
+				}
+			}
+
+			// Kinds that need a missing component must say so instead of writing broken code.
+			missing := map[string]string{"model": "postgres", "cache": "redis", "worker": "kafka", "cdc": "kafka"}
+			for kind, component := range missing {
+				if !has(component) {
+					if _, err := Make(project, kind, "order", MakeOptions{}); err == nil {
+						t.Errorf("make %s without %s: want an error", kind, component)
+					}
 				}
 			}
 
@@ -190,6 +242,46 @@ func TestCreateWritesPinnedWrappers(t *testing.T) {
 		if !strings.Contains(string(bat), "\r\n") {
 			t.Errorf("the bat script should use CRLF line endings:\n%q", bat)
 		}
+	}
+}
+
+func TestParseMembers(t *testing.T) {
+	members, err := parseMembers("pending, paid=5, sent, refunded=-1, void", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, m := range members {
+		got = append(got, m.Name+"="+m.Value)
+	}
+	if want := "Pending=1 Paid=5 Sent=6 Refunded=-1 Void=0"; strings.Join(got, " ") != want {
+		t.Errorf("got %s, want %s", strings.Join(got, " "), want)
+	}
+	strs, err := parseMembers("irr,usd=USD", true)
+	if err != nil || strs[0].Value != `"irr"` || strs[1].Value != `"USD"` {
+		t.Errorf("string members = %+v, %v", strs, err)
+	}
+	for _, bad := range []string{"", "a,a", "a=x", "1a"} {
+		if _, err := parseMembers(bad, false); err == nil {
+			t.Errorf("parseMembers(%q): want an error", bad)
+		}
+	}
+}
+
+func TestSplitName(t *testing.T) {
+	cases := map[string][2]string{
+		"order/create_order": {"create_order", "CreateOrder"},
+		"user/list":          {"user_list", "UserList"},
+		"ping":               {"ping", "Ping"},
+	}
+	for in, want := range cases {
+		file, typeName, err := splitName("request", in)
+		if err != nil || file != want[0] || typeName != want[1] {
+			t.Errorf("splitName(%q) = %q, %q, %v; want %q, %q", in, file, typeName, err, want[0], want[1])
+		}
+	}
+	if _, _, err := splitName("request", "a/b/c"); err == nil {
+		t.Error("want an error for a/b/c")
 	}
 }
 

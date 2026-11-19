@@ -21,6 +21,9 @@ import (
 	"{{.Module}}/internal/database"
 {{- end}}
 	"{{.Module}}/internal/handler"
+{{- if .Metrics}}
+	"{{.Module}}/internal/metrics"
+{{- end}}
 	"{{.Module}}/internal/router"
 	"{{.Module}}/internal/server"
 )
@@ -57,6 +60,20 @@ func run() error {
 	}
 	defer rdb.Close()
 {{end}}
+{{- if .Metrics}}
+	m := metrics.New()
+{{- if .Postgres}}
+	m.RegisterPool(db)
+{{- end}}
+{{end}}
+{{- if .Kafka}}
+	// Kafka: build writers and readers here when something uses them, e.g.
+	//
+	//	producer := kafka.NewWriter(cfg.Kafka)
+	//	defer producer.Close()
+	//
+	// Workers run in their own process: go run ./cmd/worker <name>.
+{{end}}
 	// Repositories, services and handlers are built here and passed down.
 	// Example:
 	//
@@ -65,9 +82,12 @@ func run() error {
 	//	handlers.Order = handler.NewOrderHandler(orderService)
 	handlers := router.Handlers{
 		Health: handler.NewHealthHandler({{if .Postgres}}db{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}rdb{{end}}),
+{{- if .Metrics}}
+		Metrics: m.Handler(cfg.MetricsSecret),
+{{- end}}
 	}
 
-	e := server.New(logger)
+	e := server.New(logger{{if .Metrics}}, m.Middleware(){{end}})
 	router.Register(e, handlers)
 
 	logger.Info("listening", "addr", ":"+cfg.Port)

@@ -69,12 +69,23 @@ type MakeOptions struct {
 	Table      string
 	Fields     string
 	SoftDelete bool
+	// Type is the enum base type or the cached value type.
+	Type string
+	// Members are the enum values, e.g. "pending,paid=5".
+	Members string
+	// Topic and Group are a worker's Kafka topic and consumer group; Topic is
+	// also the topic a CDC publishes to.
+	Topic string
+	Group string
 	// Now stamps migration file names; time.Now when zero.
 	Now time.Time
 }
 
 // MakeKinds are what `gortisan make` can write.
-var MakeKinds = []string{"handler", "service", "model", "migration"}
+var MakeKinds = []string{
+	"handler", "service", "model", "migration", "middleware", "request", "response",
+	"validator", "enum", "cache", "client", "worker", "cdc",
+}
 
 // Make writes one building block of kind named name into p.
 func Make(p *Project, kind, name string, opts MakeOptions) (*Report, error) {
@@ -89,6 +100,24 @@ func Make(p *Project, kind, name string, opts MakeOptions) (*Report, error) {
 		err = makeModel(p, name, opts, report)
 	case "migration":
 		err = makeMigration(p, name, opts, report)
+	case "middleware":
+		err = makeMiddleware(p, name, opts, report)
+	case "request":
+		err = makeRequest(p, name, opts, report)
+	case "response":
+		err = makeResponse(p, name, opts, report)
+	case "validator":
+		err = makeValidator(p, name, opts, report)
+	case "enum":
+		err = makeEnum(p, name, opts, report)
+	case "cache":
+		err = makeCache(p, name, opts, report)
+	case "client", "sdk":
+		err = makeClient(p, name, opts, report)
+	case "worker":
+		err = makeWorker(p, name, opts, report)
+	case "cdc":
+		err = makeCDC(p, name, opts, report)
 	default:
 		err = fmt.Errorf("unknown kind %q; choose from %s", kind, strings.Join(MakeKinds, ", "))
 	}
@@ -133,6 +162,9 @@ func makeHandler(p *Project, name string, opts MakeOptions, report *Report) erro
 		Method:   method,
 		TypeName: typeName,
 		Route:    "/" + plural(strings.ReplaceAll(group, "_", "-")),
+	}
+	if err := ensureValidate(p, report); err != nil {
+		return err
 	}
 	groupFile := "internal/handler/" + group + ".go"
 	isNewGroup := !p.exists(groupFile)

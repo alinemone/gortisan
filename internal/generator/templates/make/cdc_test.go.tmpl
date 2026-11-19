@@ -1,0 +1,29 @@
+package cdc
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestChanged(t *testing.T) {
+	before := map[string]any{"id": 1.0, "status": "new", "gone": true}
+	after := map[string]any{"id": 1.0, "status": "paid", "added": 2.0}
+	if got, want := changed(before, after), []string{"added", "gone", "status"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("changed = %v, want %v", got, want)
+	}
+}
+
+func TestObject(t *testing.T) {
+	m, err := object(struct {
+		ID int64 `json:"id"`
+	}{ID: 7})
+	if err != nil || m["id"] != 7.0 {
+		t.Fatalf("object = %v, %v", m, err)
+	}
+	if m, err := object(nil); m != nil || err != nil {
+		t.Fatalf("object(nil) = %v, %v", m, err)
+	}
+	if _, err := object(3); err == nil {
+		t.Fatal("a non-object must be rejected")
+	}
+}

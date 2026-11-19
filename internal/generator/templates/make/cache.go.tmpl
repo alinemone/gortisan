@@ -1,0 +1,79 @@
+package cache
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+{{- if .ModelImport}}
+
+	"{{.Module}}/internal/model"
+{{- end}}
+)
+
+// {{.Type}} keeps {{.Value}} values in Redis under "{{.Prefix}}:<key>" for ttl,
+// loading a missing value with load.
+type {{.Type}} struct {
+	client *redis.Client
+	ttl    time.Duration
+	load   func(ctx context.Context, key string) ({{.Value}}, error)
+}
+
+// New{{.Type}} builds the cache in main.go, e.g.
+//
+//	cache.New{{.Type}}(rdb, time.Hour, func(ctx context.Context, key string) ({{.Value}}, error) {
+//		return service.Something(ctx, key)
+//	})
+func New{{.Type}}(client *redis.Client, ttl time.Duration, load func(ctx context.Context, key string) ({{.Value}}, error)) *{{.Type}} {
+	return &{{.Type}}{client: client, ttl: ttl, load: load}
+}
+
+// Get returns the cached value, or loads it, stores it and returns it.
+// A failure to store does not fail the read; the next Get loads again.
+func (c *{{.Type}}) Get(ctx context.Context, key string) ({{.Value}}, error) {
+	var value {{.Value}}
+	raw, err := c.client.Get(ctx, c.redisKey(key)).Bytes()
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(raw, &value); err == nil {
+			return value, nil
+		}
+		// An unreadable entry (e.g. the type changed) is reloaded below.
+	case !errors.Is(err, redis.Nil):
+		return value, fmt.Errorf("cache {{.Prefix}}: get %s: %w", key, err)
+	}
+
+	value, err = c.load(ctx, key)
+	if err != nil {
+		return value, err
+	}
+	_ = c.Put(ctx, key, value)
+	return value, nil
+}
+
+// Put stores value under key.
+func (c *{{.Type}}) Put(ctx context.Context, key string, value {{.Value}}) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("cache {{.Prefix}}: encode %s: %w", key, err)
+	}
+	if err := c.client.Set(ctx, c.redisKey(key), raw, c.ttl).Err(); err != nil {
+		return fmt.Errorf("cache {{.Prefix}}: set %s: %w", key, err)
+	}
+	return nil
+}
+
+// Forget removes key, so the next Get loads it again.
+func (c *{{.Type}}) Forget(ctx context.Context, key string) error {
+	if err := c.client.Del(ctx, c.redisKey(key)).Err(); err != nil {
+		return fmt.Errorf("cache {{.Prefix}}: delete %s: %w", key, err)
+	}
+	return nil
+}
+
+func (c *{{.Type}}) redisKey(key string) string {
+	return "{{.Prefix}}:" + key
+}

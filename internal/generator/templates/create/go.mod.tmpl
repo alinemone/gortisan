@@ -10,4 +10,10 @@ require (
 {{- if .Redis}}
 	github.com/redis/go-redis/v9 v9.23.0
 {{- end}}
+{{- if .Kafka}}
+	github.com/segmentio/kafka-go v0.4.51
+{{- end}}
+{{- if .Metrics}}
+	github.com/prometheus/client_golang v1.25.0
+{{- end}}
 )

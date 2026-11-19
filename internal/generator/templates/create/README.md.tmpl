@@ -7,10 +7,19 @@ imports gortisan, and gortisan is not in `go.mod`. Change anything.
 
 ```bash
 cp .env.example .env
-go run ./cmd/{{.Name}}
+./gortisan run               # builds, runs, and restarts on every change
+                             # (or: go run ./cmd/{{.Name}})
 curl localhost:8080/ping     # {"ping":"pong"}
 curl localhost:8080/health   # {"status":"pass","checks":{...}}
+{{- if .Metrics}}
+curl localhost:8080/metrics  # Prometheus; set METRICS_SECRET to require a bearer token
+{{- end}}
 ```
+{{- if .Kafka}}
+
+Workers run in their own process: `./gortisan run worker -- <name>` or
+`go run ./cmd/worker <name>`.
+{{- end}}
 
 ## Layout
 
@@ -22,6 +31,7 @@ curl localhost:8080/health   # {"status":"pass","checks":{...}}
 | `internal/router` | the full list of routes |
 | `internal/handler` | HTTP handlers: read the request, call a service, write the response |
 | `internal/service` | business logic |
+| `internal/validate` | collects field errors into one 422 |
 {{- if .Postgres}}
 | `internal/database` | the PostgreSQL pool, `DBTX` and `InTx` |
 | `internal/database/orm` | a small mapper from structs to tables (optional, see below) |
@@ -30,7 +40,13 @@ curl localhost:8080/health   # {"status":"pass","checks":{...}}
 | `migrations` | SQL migrations, `*.up.sql` / `*.down.sql` |
 {{- end}}
 {{- if .Redis}}
-| `internal/cache` | the Redis client |
+| `internal/cache` | the Redis client and typed caches |
+{{- end}}
+{{- if .Kafka}}
+| `internal/kafka` | Kafka readers, writers and `Publish` |
+{{- end}}
+{{- if .Metrics}}
+| `internal/metrics` | Prometheus metrics and `/metrics` |
 {{- end}}
 
 ## Rules
@@ -39,6 +55,8 @@ curl localhost:8080/health   # {"status":"pass","checks":{...}}
   `main.go` wires them. No globals, no values hidden in `context.Context`.
 - **Errors carry the status.** A handler returns `echo.NewHTTPError(code, "message")`
   for a client error; any other error becomes a 500 and is logged.
+- **Validation returns every error at once.** `var errs validate.Errors`, then
+  `errs.Add(...)` / `errs.Check(ctx, field, rule)`, then `return errs.Err()`.
 {{- if .Postgres}}
 - **Transactions are explicit.** `database.InTx(ctx, db, func(tx pgx.Tx) error { ... })`
   and `repo.WithTx(tx)`.
@@ -71,11 +89,26 @@ no code imports it and `go.mod` does not list it. Delete the three scripts if yo
 do not want them.
 
 ```bash
-./gortisan list                               # every command
-./gortisan make:handler order/get_order       # internal/handler/order.go + order_get_order.go
-./gortisan make:service order                 # internal/service/order_service.go
+./gortisan list                                   # every command and flag
+./gortisan make:handler order/get_order
+./gortisan make:service order
+./gortisan make:middleware request_id
+./gortisan make:request order/create_order
+./gortisan make:response order/order_detail
+./gortisan make:validator order/not_paid
+./gortisan make:enum order_status --members "pending,paid,sent"
+./gortisan make:client salam-pay
 {{- if .Postgres}}
 ./gortisan make:model order --fields "user_id:int64,status:string,paid_at:time?" --soft-delete
 ./gortisan make:migration add_index_to_orders
+{{- end}}
+{{- if .Redis}}
+./gortisan make:cache vendor_order_count --type int64
+{{- end}}
+{{- if .Kafka}}
+./gortisan make:worker send_notifications --topic notifications
+{{- if .Postgres}}
+./gortisan make:cdc order
+{{- end}}
 {{- end}}
 ```

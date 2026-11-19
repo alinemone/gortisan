@@ -12,13 +12,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"strings"
+	"syscall"
 
 	"github.com/alinemone/gortisan/internal/generator"
+	"github.com/alinemone/gortisan/internal/runner"
 )
 
 func main() {
@@ -39,6 +43,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runCreate(args[1:], stdout, stderr)
 	case "make":
 		return runMake(args[1:], stdout, stderr)
+	case "run", "serve":
+		return runRun(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, version())
 		return 0
@@ -131,7 +137,7 @@ func runCreate(args []string, stdout, stderr io.Writer) int {
 }
 
 func runMake(args []string, stdout, stderr io.Writer) int {
-	f, err := parseFlags(args, []string{"table", "fields"}, []string{"force", "soft-delete"})
+	f, err := parseFlags(args, []string{"table", "fields", "type", "members", "topic", "group"}, []string{"force", "soft-delete"})
 	if err != nil {
 		fmt.Fprintln(stderr, "gortisan:", err)
 		return 2
@@ -155,8 +161,67 @@ func runMake(args []string, stdout, stderr io.Writer) int {
 		Table:      f.values["table"],
 		Fields:     f.values["fields"],
 		SoftDelete: f.bools["soft-delete"],
+		Type:       f.values["type"],
+		Members:    f.values["members"],
+		Topic:      f.values["topic"],
+		Group:      f.values["group"],
 	})
 	printReport(stdout, report)
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	return 0
+}
+
+// runRun is `gortisan run [command] [--no-watch] [-- args...]`.
+func runRun(args []string, stdout, stderr io.Writer) int {
+	var programArgs []string
+	for i, arg := range args {
+		if arg == "--" {
+			args, programArgs = args[:i], args[i+1:]
+			break
+		}
+	}
+	f, err := parseFlags(args, nil, []string{"no-watch"})
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 2
+	}
+	if len(f.positional) > 1 {
+		fmt.Fprintln(stderr, "usage: gortisan run [command] [--no-watch] [-- args...]")
+		return 2
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	project, err := generator.FindProject(cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	name := ""
+	if len(f.positional) == 1 {
+		name = f.positional[0]
+	}
+	target, err := runner.ResolveTarget(project.Root, project.Module, name)
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	err = runner.Run(ctx, runner.Options{
+		Root:   project.Root,
+		Target: target,
+		Args:   programArgs,
+		Watch:  !f.bools["no-watch"],
+		Stdout: stdout,
+		Stderr: stderr,
+	})
 	if err != nil {
 		fmt.Fprintln(stderr, "gortisan:", err)
 		return 1
@@ -198,16 +263,33 @@ func usage(w io.Writer) {
 Usage:
   gortisan create <name> [flags]        create a new project in ./<name>
       --module <path>                   Go module path (default: <name>)
-      --with postgres,redis|all|none    pieces to include (default: all)
+      --with <list>                     postgres, redis, kafka, metrics, all or none
+                                        (default: postgres,redis,metrics)
       --no-tidy                         skip "go mod tidy"
 
-  gortisan make:handler <group>/<action>   internal/handler/<group>_<action>.go
-  gortisan make:service <name>             internal/service/<name>_service.go
-  gortisan make:model <name> [flags]       model, repository and migration
-      --fields "user_id:int64,status:string,paid_at:time?"
-      --table <name>                    (default: plural of <name>)
-      --soft-delete                     add deleted_at
-  gortisan make:migration <name>           empty migrations/<time>_<name>.{up,down}.sql
+  gortisan run [command] [-- args]      build and run cmd/<command>, restarting on changes
+      --no-watch                        run once, without watching
+
+  gortisan make:<kind> <name> [flags]   add code to the project:
+    handler <group>/<action>            internal/handler/<group>_<action>.go
+    service <name>                      internal/service/<name>_service.go
+    model <name>                        model, repository and migration (postgres)
+        --fields "user_id:int64,status:string,paid_at:time?"
+        --table <name>                  (default: plural of <name>)
+        --soft-delete                   add deleted_at
+    migration <name>                    empty migrations/<time>_<name>.{up,down}.sql
+    middleware <name>                   internal/middleware/<name>.go
+    request [<group>/]<name>            internal/request/<name>.go
+    response [<group>/]<name>           internal/response/<name>.go
+    validator [<group>/]<name>          internal/validator/<name>.go (a validate.Rule)
+    enum <name> --members <list>        internal/enum/<name>.go
+        --members "pending,paid=5,sent" integers count up from 1 or the previous value
+        --type <type>                   string or an integer type (default: int64)
+    cache <name> [--type <type>]        internal/cache/<name>.go, a Redis cache (redis)
+    client <name>                       internal/client/<name>/client.go, an HTTP client
+    worker <name>                       internal/worker/<name>.go and cmd/worker (kafka)
+        --topic <topic>  --group <group>  (default: <name>)
+    cdc <model> [--topic <topic>]       internal/cdc/<model>.go, change events (kafka)
 
   make flags: --force overwrites existing files. "make handler" (with a space)
   works too. Inside a project, ./gortisan runs the version that created it.

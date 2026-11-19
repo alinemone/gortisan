@@ -14,11 +14,14 @@ import (
 )
 
 // New returns echo with request logging, panic recovery and JSON errors.
-func New(logger *slog.Logger) *echo.Echo {
+// outer middleware (such as metrics) runs before the request logger, so it
+// sees the final status of every request.
+func New(logger *slog.Logger, outer ...echo.MiddlewareFunc) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
 	e.HTTPErrorHandler = errorHandler(logger)
+	e.Use(outer...)
 	e.Use(
 		requestLogger(logger),
 		// A panic is logged with its stack here and returned as an error, so
@@ -96,25 +99,34 @@ type errorResponse struct {
 }
 
 // errorHandler writes {"message": "..."}. An *echo.HTTPError keeps its status
-// and message; any other error is a 500 whose details stay in the log.
+// and message — a message that is not a string, such as validate.Body, is
+// written as the body itself; any other error is a 500 whose details stay in
+// the log.
 func errorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
 	return func(err error, c echo.Context) {
 		if c.Response().Committed {
 			return
 		}
 		status := http.StatusInternalServerError
-		message := http.StatusText(status)
+		var body any = errorResponse{Message: http.StatusText(status)}
 		var httpErr *echo.HTTPError
 		if errors.As(err, &httpErr) {
 			status = httpErr.Code
-			message = fmt.Sprint(httpErr.Message)
+			switch message := httpErr.Message.(type) {
+			case string:
+				body = errorResponse{Message: message}
+			case error:
+				body = errorResponse{Message: message.Error()}
+			default:
+				body = message
+			}
 		}
 
 		var writeErr error
 		if c.Request().Method == http.MethodHead {
 			writeErr = c.NoContent(status)
 		} else {
-			writeErr = c.JSON(status, errorResponse{Message: message})
+			writeErr = c.JSON(status, body)
 		}
 		if writeErr != nil {
 			logger.Error("write error response", "error", writeErr)

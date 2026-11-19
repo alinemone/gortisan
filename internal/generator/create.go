@@ -11,13 +11,17 @@ import (
 )
 
 // Components are the optional pieces `create --with` picks.
-var Components = []string{"postgres", "redis"}
+var Components = []string{"postgres", "redis", "kafka", "metrics"}
+
+// DefaultComponents are what create includes without --with.
+var DefaultComponents = []string{"postgres", "redis", "metrics"}
 
 // CreateOptions configure Create.
 type CreateOptions struct {
 	// Module is the Go module path; the project name when empty.
 	Module string
-	// With is a comma-separated list of Components, "all" or "none".
+	// With is a comma-separated list of Components, "all" or "none";
+	// DefaultComponents when empty.
 	With string
 	// NoTidy skips `go mod tidy` after writing the files.
 	NoTidy bool
@@ -35,6 +39,8 @@ type projectData struct {
 	Title    string
 	Postgres bool
 	Redis    bool
+	Kafka    bool
+	Metrics  bool
 	Tool     string // ToolPackage@version
 }
 
@@ -66,6 +72,8 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		Title:    title(name),
 		Postgres: with["postgres"],
 		Redis:    with["redis"],
+		Kafka:    with["kafka"],
+		Metrics:  with["metrics"],
 		Tool:     ToolPackage + "@" + toolVersion(opts.Version),
 	}
 
@@ -77,6 +85,8 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		{"internal/server/server_test.go", "create/server_test.go.tmpl"},
 		{"internal/router/router.go", "create/router.go.tmpl"},
 		{"internal/handler/health.go", "create/health.go.tmpl"},
+		{"internal/validate/validate.go", "create/validate.go.tmpl"},
+		{"internal/validate/validate_test.go", "create/validate_test.go.tmpl"},
 		{".env.example", "create/env.example.tmpl"},
 		{".gitignore", "create/gitignore.tmpl"},
 		{"Dockerfile", "create/Dockerfile.tmpl"},
@@ -98,6 +108,12 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 	}
 	if data.Redis {
 		outputs = append(outputs, output{"internal/cache/redis.go", "create/redis.go.tmpl"})
+	}
+	if data.Kafka {
+		outputs = append(outputs, output{"internal/kafka/kafka.go", "create/kafka.go.tmpl"})
+	}
+	if data.Metrics {
+		outputs = append(outputs, output{"internal/metrics/metrics.go", "create/metrics.go.tmpl"})
 	}
 
 	if err := renderAll(root, outputs, data, false, report); err != nil {
@@ -130,7 +146,12 @@ func toolVersion(v string) string {
 func parseWith(value string) (map[string]bool, error) {
 	with := map[string]bool{}
 	switch strings.TrimSpace(value) {
-	case "", "all":
+	case "":
+		for _, c := range DefaultComponents {
+			with[c] = true
+		}
+		return with, nil
+	case "all":
 		for _, c := range Components {
 			with[c] = true
 		}

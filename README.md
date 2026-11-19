@@ -19,6 +19,9 @@ project still builds.
 - [Commands](#commands)
 - [What gets generated](#what-gets-generated)
 - [The database layer](#the-database-layer)
+- [Validation](#validation)
+- [Kafka: workers and CDC](#kafka-workers-and-cdc)
+- [Adding auth, Sentry, translations…](#adding-auth-sentry-translations)
 - [No magic: the rules](#no-magic-the-rules)
 - [Not supported yet](#not-supported-yet)
 - [Development](#development)
@@ -38,12 +41,13 @@ gortisan version
 gortisan create shop --module github.com/you/shop
 cd shop
 cp .env.example .env          # point it at PostgreSQL and Redis
-go run ./cmd/shop
+./gortisan run                # build, run, rebuild and restart on every change
 ```
 
 ```bash
 curl localhost:8080/ping      # {"ping":"pong"}
 curl localhost:8080/health    # {"status":"pass","checks":{"postgres":"up","redis":"up"}}
+curl localhost:8080/metrics   # Prometheus
 ```
 
 Add an endpoint backed by a table:
@@ -81,28 +85,45 @@ the same code, nobody needs gortisan installed, and the project's code and
 
 ## Commands
 
-| Command | Writes |
+| Command | What it does |
 |---|---|
-| `gortisan create <name>` | a new project in `./<name>` |
-| `make:handler <group>/<action>` | `internal/handler/<group>.go` (once) and `internal/handler/<group>_<action>.go` |
+| `create <name>` | a new project in `./<name>` |
+| `run [command] [-- args]` | builds and runs `cmd/<command>`, rebuilding and restarting when a `.go` file, `go.mod` or `.env` changes; a failed build waits for the next change. `--no-watch` runs once |
+| `make:handler <group>/<action>` | `internal/handler/<group>.go` (once) and `<group>_<action>.go`, with its request, validation and response |
 | `make:service <name>` | `internal/service/<name>_service.go` |
-| `make:model <name>` | `internal/model/<name>.go`, `internal/repository/<name>_repository.go`, `migrations/<time>_create_<table>_table.{up,down}.sql` |
+| `make:model <name>` | model, repository with its table mapping, and a create-table migration *(postgres)* |
 | `make:migration <name>` | empty `migrations/<time>_<name>.{up,down}.sql` |
-| `list`, `help` | the command reference |
-| `version` | the gortisan version |
+| `make:middleware <name>` | `internal/middleware/<name>.go`, an `echo.MiddlewareFunc` |
+| `make:request [<group>/]<name>` | `internal/request/<name>.go`, a request type with `Validate` |
+| `make:response [<group>/]<name>` | `internal/response/<name>.go` |
+| `make:validator [<group>/]<name>` | `internal/validator/<name>.go`, a reusable rule (`validate.Rule`) |
+| `make:enum <name>` | `internal/enum/<name>.go`: constants, `String`, `Valid`, `Parse…`, the list of values |
+| `make:cache <name>` | `internal/cache/<name>.go`, a typed Redis cache around a loader *(redis)* |
+| `make:client <name>` | `internal/client/<name>/client.go`, a JSON HTTP client for another service |
+| `make:worker <name>` | `internal/worker/<name>.go`, a Kafka consumer, and `cmd/worker` *(kafka)* |
+| `make:cdc <model>` | `internal/cdc/<model>.go`, change events of a model to Kafka *(kafka, postgres)* |
+| `list`, `help`, `version` | |
 
-`make handler` (with a space) is the same as `make:handler`.
+`make handler` (with a space) is the same as `make:handler`. A kind marked
+*(postgres)*, *(redis)* or *(kafka)* needs that piece in the project and says so
+otherwise.
 
 **Flags**
 
 | Flag | Command | Meaning |
 |---|---|---|
 | `--module <path>` | `create` | Go module path (default: the project name) |
-| `--with <list>` | `create` | `postgres`, `redis`, `all` (default) or `none` |
+| `--with <list>` | `create` | any of `postgres`, `redis`, `kafka`, `metrics`; `all`; `none` (default: `postgres,redis,metrics`) |
 | `--no-tidy` | `create` | skip `go mod tidy` |
+| `--no-watch` | `run` | run once |
 | `--fields "<list>"` | `make:model` | columns, e.g. `user_id:int64,status:string,paid_at:time?` |
-| `--table <name>` | `make:model` | table name (default: plural of the model, `category` → `categories`) |
+| `--table <name>` | `make:model` | table name (default: the plural, `category` → `categories`) |
 | `--soft-delete` | `make:model` | add `deleted_at`; deletes set it and queries skip those rows |
+| `--members "<list>"` | `make:enum` | `pending,paid=5,sent`: integers count up from 1 or the previous value; strings default to the name |
+| `--type <type>` | `make:enum` | `string` or an integer type (default `int64`) |
+| `--type <type>` | `make:cache` | the cached Go type, e.g. `int64`, `[]string`, `*model.Order` (default `string`) |
+| `--topic <topic>` | `make:worker`, `make:cdc` | topic consumed / published to (default: the worker name / the table) |
+| `--group <group>` | `make:worker` | consumer group (default: the worker name) |
 | `--force` | `make:*` | overwrite files that exist |
 
 **Field types** for `--fields`: `string`/`text`, `int`/`int64`/`bigint`,
@@ -115,21 +136,23 @@ trailing `?` makes the column nullable (a pointer in Go). Every model also gets
 ```
 shop/
 ├── cmd/shop/main.go           builds every dependency in order and starts the server
+├── cmd/worker/main.go         runs one Kafka worker by name                (kafka)
 ├── internal/
 │   ├── config/                env vars (+ .env) → Config; no struct tags, no reflection
 │   ├── server/                echo: JSON request log (slog), panic recovery, JSON errors, graceful shutdown
 │   ├── router/                every route, in one file
 │   ├── handler/               HTTP handlers; health.go answers /ping and /health
 │   ├── service/               business logic
-│   ├── database/              pgx pool, DBTX, InTx                   (postgres)
-│   │   └── orm/               the table mapper — project code         (postgres)
-│   ├── model/                 rows as plain structs                   (postgres)
-│   ├── repository/            reads and writes tables                 (postgres)
-│   └── cache/                 go-redis client                         (redis)
-├── migrations/                plain SQL, *.up.sql / *.down.sql        (postgres)
+│   ├── validate/              field errors → one 422
+│   ├── database/  database/orm/  model/  repository/                       (postgres)
+│   ├── cache/                 go-redis client and typed caches             (redis)
+│   ├── kafka/  worker/  cdc/                                               (kafka)
+│   ├── metrics/               Prometheus: requests by route and status, Go runtime, DB pool (metrics)
+│   └── middleware/  request/  response/  validator/  enum/  client/        (when you make them)
+├── migrations/                plain SQL, *.up.sql / *.down.sql             (postgres)
 ├── gortisan, gortisan.bat, gortisan.ps1
 ├── .env.example  Dockerfile  Makefile  README.md
-└── go.mod                     echo, pgx, go-redis — nothing else
+└── go.mod                     echo, pgx, go-redis, kafka-go, prometheus — only what you picked
 ```
 
 A handler is an ordinary method; its dependencies are fields set by its
@@ -145,11 +168,15 @@ func NewOrderHandler(orders *service.OrderService) *OrderHandler {
 }
 
 func (h *OrderHandler) GetOrder(c echo.Context) error {
+	ctx := c.Request().Context()
 	var req GetOrderRequest
 	if err := c.Bind(&req); err != nil {
 		return err
 	}
-	order, err := h.orders.Find(c.Request().Context(), req.ID)
+	if err := req.Validate(ctx); err != nil {
+		return err
+	}
+	order, err := h.orders.Find(ctx, req.ID)
 	if errors.Is(err, orm.ErrNotFound) {
 		return echo.NewHTTPError(http.StatusNotFound, "order not found")
 	}
@@ -165,8 +192,9 @@ func (h *OrderHandler) GetOrder(c echo.Context) error {
 ```go
 orders := repository.NewOrderRepository(db)
 handlers := router.Handlers{
-	Health: handler.NewHealthHandler(db, rdb),
-	Order:  handler.NewOrderHandler(service.NewOrderService(orders)),
+	Health:  handler.NewHealthHandler(db, rdb),
+	Metrics: m.Handler(cfg.MetricsSecret),
+	Order:   handler.NewOrderHandler(service.NewOrderService(orders)),
 }
 ```
 
@@ -221,13 +249,97 @@ Arguments are always sent as parameters, never written into the SQL, and `Set`
 rejects column names that are not in `Columns`. To drop the mapper, rewrite the
 repository methods with SQL and delete `internal/database/orm`.
 
+## Validation
+
+A request collects every problem and returns them together:
+
+```go
+func (r *CreateOrderRequest) Validate(ctx context.Context) error {
+	var errs validate.Errors
+	if r.Quantity <= 0 {
+		errs.Add("quantity", "must be positive")
+	}
+	// a reusable rule from `make:validator`; an error means the check could not run
+	if err := errs.Check(ctx, "order_id", validator.NewOrderNotPaid(r.orders, r.OrderID)); err != nil {
+		return err
+	}
+	return errs.Err()
+}
+```
+
+```json
+422 {"message": "The given data was invalid.",
+     "errors": [{"field": "quantity", "message": "must be positive"}]}
+```
+
+## Kafka: workers and CDC
+
+`create --with kafka` adds `internal/kafka` (readers, writers, `Publish`) and
+`KAFKA_BROKERS`.
+
+`make:worker send_notifications --topic notifications` writes a consumer with a
+`Run(ctx)` loop: fetch, decode the JSON message, handle, commit. A failed message
+is logged and committed so it cannot block the partition — the loop is in your
+file, so change that if you need retries. The first worker also writes
+`cmd/worker/main.go`; each later one prints the `case` to add there. Run one
+process per worker:
+
+```bash
+./gortisan run worker -- send_notifications      # or: go run ./cmd/worker send_notifications
+```
+
+`make:cdc order` publishes the order's changes, keyed by id:
+
+```json
+{"reference_id": 42, "log_time": "2026-11-19 10:00:00.000000+03:30", "operation": "U",
+ "old_data": {"id": 42, "status": "new"}, "new_data": {"id": 42, "status": "paid"},
+ "change_data": ["status"]}
+```
+
+List the fields consumers should see in `OrderCDCData`; an update that changes
+none of them publishes nothing. Call `Created`, `Updated` and `Deleted` after the
+transaction commits.
+
+## Adding auth, Sentry, translations…
+
+gortisan does not generate them, on purpose: every company does them
+differently, and a generated version would have to pick a library for you. They
+are a few lines each, added by hand, and they stay explicit — a middleware and a
+constructor call in `main.go`:
+
+```bash
+./gortisan make:middleware authenticate
+```
+
+```go
+// internal/middleware/authenticate.go
+func Authenticate(tokens *auth.Client) echo.MiddlewareFunc { // your own auth SDK
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			user, err := tokens.Verify(c.Request().Context(), c.Request().Header.Get("Authorization"))
+			if err != nil {
+				return echo.NewHTTPError(http.StatusUnauthorized)
+			}
+			c.Set("user", user) // or pass it on explicitly
+			return next(c)
+		}
+	}
+}
+
+// internal/router/router.go
+v1.Use(middleware.Authenticate(h.Tokens))
+```
+
+Error reporting (Sentry and the like) goes in the same way: a middleware passed to
+`server.New(logger, sentryMiddleware)`, or a call in `server`'s error handler.
+
 ## No magic: the rules
 
 The generated code follows these rules, and gortisan's own tests check the first one
 on every build:
 
-1. **No import of the generator.** Only the project's own packages and echo, pgx
-   and go-redis.
+1. **No import of the generator.** Only the project's own packages and the
+   libraries you picked (echo, pgx, go-redis, kafka-go, prometheus).
 2. **Dependencies are passed, not looked up.** Constructors take what they need and
    `main.go` wires them; nothing is stored in or resolved from `context.Context`.
 3. **No reflection in project code.** Config reads each variable by name; the
@@ -239,23 +351,15 @@ on every build:
 
 ## Not supported yet
 
-These are on the list; contributions and requests are welcome.
-
-- `make:middleware`, `make:request` / `make:response` as separate files
-  (today they are part of the handler file), `make:validator`
-- `make:enum`, `make:cache` (a typed Redis cache around a loader)
-- Kafka: `create --with kafka`, `make:worker`, `make:cdc`
-- `make:client` — an HTTP client for another service
-- OpenAPI / Swagger docs, a Prometheus `/metrics` endpoint, authentication middleware,
-  Sentry, translations
+- OpenAPI / Swagger docs
 - running `create` again in an existing project to add a missing piece
 - overriding the built-in templates per project
 
 ## Development
 
 ```bash
-go test ./...          # also creates a project for every --with choice and runs
-                       # go mod tidy, go vet and go test inside it (downloads modules)
+go test ./...          # also creates a project for every --with choice, runs every
+                       # make:* in it, then go mod tidy, go vet and go test (downloads modules)
 go test -short ./...   # unit tests only
 ```
 
