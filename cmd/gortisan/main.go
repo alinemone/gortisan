@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -45,6 +46,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runMake(args[1:], stdout, stderr)
 	case "run", "serve":
 		return runRun(args[1:], stdout, stderr)
+	case "generate", "gen":
+		return runGenerate(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, version())
 		return 0
@@ -221,6 +224,14 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		Watch:  !f.bools["no-watch"],
 		Stdout: stdout,
 		Stderr: stderr,
+		BeforeBuild: func() error {
+			if !hasORM(project) {
+				return nil
+			}
+			report, err := generator.Generate(project, generator.GenerateOptions{})
+			printReport(stderr, report)
+			return err
+		},
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "gortisan:", err)
@@ -229,12 +240,54 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// runGenerate is `gortisan generate [--check]`.
+func runGenerate(args []string, stdout, stderr io.Writer) int {
+	f, err := parseFlags(args, nil, []string{"check"})
+	if err != nil || len(f.positional) > 0 {
+		fmt.Fprintln(stderr, "usage: gortisan generate [--check]")
+		return 2
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	project, err := generator.FindProject(cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	report, err := generator.Generate(project, generator.GenerateOptions{Check: f.bools["check"]})
+	printReport(stdout, report)
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	if f.bools["check"] {
+		fmt.Fprintln(stdout, "generated files are up to date")
+	} else if len(report.Created)+len(report.Updated)+len(report.Removed)+len(report.Next) == 0 {
+		fmt.Fprintln(stdout, "nothing to generate; every mapping is up to date")
+	}
+	return 0
+}
+
+func hasORM(p *generator.Project) bool {
+	_, err := os.Stat(filepath.Join(p.Root, "internal", "database", "orm", "orm.go"))
+	return err == nil
+}
+
 func printReport(w io.Writer, report *generator.Report) {
 	if report == nil {
 		return
 	}
 	for _, path := range report.Created {
 		fmt.Fprintln(w, "created", path)
+	}
+	for _, path := range report.Updated {
+		fmt.Fprintln(w, "updated", path)
+	}
+	for _, path := range report.Removed {
+		fmt.Fprintln(w, "removed", path)
 	}
 	for _, path := range report.Skipped {
 		fmt.Fprintln(w, "exists ", path, "(kept; --force overwrites)")
@@ -269,6 +322,8 @@ Usage:
 
   gortisan run [command] [-- args]      build and run cmd/<command>, restarting on changes
       --no-watch                        run once, without watching
+  gortisan generate [--check]           write the table mappings of internal/model
+                                        (gortisan run and make:model do it for you)
 
   gortisan make:<kind> <name> [flags]   add code to the project:
     handler <group>/<action>            internal/handler/<group>_<action>.go

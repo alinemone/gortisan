@@ -36,6 +36,9 @@ type Options struct {
 	Interval time.Duration
 	// Stdout and Stderr receive the program's output and the runner's messages.
 	Stdout, Stderr io.Writer
+	// BeforeBuild runs before every build, e.g. to regenerate code. An error
+	// is reported like a failed build.
+	BeforeBuild func() error
 }
 
 // ResolveTarget picks the command to run: name when given, otherwise the
@@ -88,12 +91,20 @@ func Run(ctx context.Context, o Options) error {
 	}
 
 	for {
+		// Before the snapshot, so files BeforeBuild writes do not count as a change.
+		var prepareErr error
+		if o.BeforeBuild != nil {
+			prepareErr = o.BeforeBuild()
+		}
 		before, err := snapshot(o.Root)
 		if err != nil {
 			return err
 		}
 		var proc *process
-		if err := build(ctx, o, binary); err != nil {
+		if err := errors.Join(prepareErr, buildIfPrepared(ctx, o, binary, prepareErr)); err != nil {
+			if prepareErr != nil {
+				fmt.Fprintf(o.Stderr, "gortisan run: %v\n", prepareErr)
+			}
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -160,6 +171,13 @@ func waitForChange(ctx context.Context, o Options, before map[string]stamp, proc
 			}
 		}
 	}
+}
+
+func buildIfPrepared(ctx context.Context, o Options, binary string, prepareErr error) error {
+	if prepareErr != nil {
+		return nil
+	}
+	return build(ctx, o, binary)
 }
 
 func build(ctx context.Context, o Options, binary string) error {

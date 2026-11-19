@@ -22,6 +22,8 @@ var templateFS embed.FS
 // Report collects what a command did.
 type Report struct {
 	Created []string
+	Updated []string
+	Removed []string
 	Skipped []string
 	Next    []string
 }

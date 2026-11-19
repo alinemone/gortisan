@@ -254,6 +254,14 @@ func makeModel(p *Project, name string, opts MakeOptions, report *Report) error 
 	}, data, opts.Force, report); err != nil {
 		return err
 	}
+	generated, err := Generate(p, GenerateOptions{})
+	report.Created = append(report.Created, generated.Created...)
+	report.Updated = append(report.Updated, generated.Updated...)
+	report.Removed = append(report.Removed, generated.Removed...)
+	report.Next = append(report.Next, generated.Next...)
+	if err != nil {
+		return err
+	}
 	report.next("apply migrations/%s_create_%s_table.up.sql to the database", stamp, table)
 	report.next("build it in main.go with repository.New%sRepository(db)", data.Type)
 	return nil

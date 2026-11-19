@@ -8,65 +8,8 @@ import (
 	"{{.Module}}/internal/model"
 )
 
-// {{.Var}}Table maps model.{{.Type}} to the {{.Table}} table. Keep it in step
-// with the struct and the migration: Scan reads Columns in their order, and
-// InsertValues returns InsertColumns in theirs.
-var {{.Var}}Table = orm.Table[model.{{.Type}}]{
-	Name:       "{{.Table}}",
-	PrimaryKey: "id",
-	Columns: []string{
-		"id",
-{{- if not .Fields}}
-		// "name",
-{{- end}}
-{{- range .Fields}}
-		"{{.Column}}",
-{{- end}}
-		"created_at",
-		"updated_at",
-{{- if .SoftDelete}}
-		"deleted_at",
-{{- end}}
-	},
-	Scan: func(row orm.Scanner, m *model.{{.Type}}) error {
-		return row.Scan(
-			&m.ID,
-{{- if not .Fields}}
-			// &m.Name,
-{{- end}}
-{{- range .Fields}}
-			&m.{{.GoName}},
-{{- end}}
-			&m.CreatedAt,
-			&m.UpdatedAt,
-{{- if .SoftDelete}}
-			&m.DeletedAt,
-{{- end}}
-		)
-	},
-	InsertColumns: []string{
-{{- if not .Fields}}
-		// "name",
-{{- end}}
-{{- range .Fields}}
-		"{{.Column}}",
-{{- end}}
-	},
-	InsertValues: func(m *model.{{.Type}}) []any {
-		return []any{
-{{- if not .Fields}}
-			// m.Name,
-{{- end}}
-{{- range .Fields}}
-			m.{{.GoName}},
-{{- end}}
-		}
-	},
-	UpdatedAtColumn: "updated_at",
-{{- if .SoftDelete}}
-	SoftDeleteColumn: "deleted_at",
-{{- end}}
-}
+// {{.Var}}Table (the column mapping) is generated from model.{{.Type}} into
+// {{.Name}}_table_gen.go.
 
 // {{.Type}}Repository reads and writes {{.Table}}.
 type {{.Type}}Repository struct {

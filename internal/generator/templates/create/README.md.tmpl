@@ -63,9 +63,12 @@ Workers run in their own process: `./gortisan run worker -- <name>` or
 
 ## The database layer
 
-`internal/database/orm` maps a struct to a table without reflection: the
-repository file holds an `orm.Table[T]` value that lists the columns, scans a row
-and gives the values to insert. Using it is optional:
+A model is a struct; every field with a `db` tag is a column (`db:"id,pk"` for the
+primary key, `db:"created_at,default"` for a column the database fills). The
+mapping in `internal/repository/*_table_gen.go` is generated from it — by
+`make:model`, by `./gortisan run` on every save, or by `./gortisan generate`.
+To add a column, add a field and a migration. Nothing reads the tags at run
+time. Using the mapper is optional:
 
 ```go
 // with the mapper

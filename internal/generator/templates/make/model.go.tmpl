@@ -7,20 +7,23 @@ import (
 	"time"
 )
 
-// {{.Type}} is a row of {{.Table}}. Its columns are mapped in
-// internal/repository/{{.Name}}_repository.go.
+// {{.Type}} is a row of {{.Table}}. Every field with a db tag is a column;
+// internal/repository/{{.Name}}_table_gen.go is generated from them.
+//
+// To add a column, add a field — e.g. Name string `db:"name" json:"name"` —
+// and a migration; gortisan run (or ./gortisan generate) updates the mapping.
+// db tag options: pk for the primary key, default for a column the database
+// fills (it is read back, never inserted).
+//
+//gortisan:table {{.Table}}
 type {{.Type}} struct {
-	ID        int64      `json:"id"`
-{{- if not .Fields}}
-	// Add columns here, e.g. Name string `json:"name"`, then uncomment the
-	// matching "name" lines in the repository and the migration.
-{{- end}}
+	ID        int64      `db:"id,pk" json:"id"`
 {{- range .Fields}}
-	{{.GoName}} {{.GoType}} `json:"{{.Column}}"`
+	{{.GoName}} {{.GoType}} `db:"{{.Column}}" json:"{{.Column}}"`
 {{- end}}
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	CreatedAt time.Time  `db:"created_at,default" json:"created_at"`
+	UpdatedAt time.Time  `db:"updated_at,default" json:"updated_at"`
 {{- if .SoftDelete}}
-	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	DeletedAt *time.Time `db:"deleted_at,default" json:"deleted_at,omitempty"`
 {{- end}}
 }
