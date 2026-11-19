@@ -140,7 +140,7 @@ func runCreate(args []string, stdout, stderr io.Writer) int {
 }
 
 func runMake(args []string, stdout, stderr io.Writer) int {
-	f, err := parseFlags(args, []string{"table", "fields", "type", "members", "topic", "group"}, []string{"force", "soft-delete"})
+	f, err := parseFlags(args, []string{"table", "fields", "type", "members"}, []string{"force", "soft-delete"})
 	if err != nil {
 		fmt.Fprintln(stderr, "gortisan:", err)
 		return 2
@@ -166,8 +166,6 @@ func runMake(args []string, stdout, stderr io.Writer) int {
 		SoftDelete: f.bools["soft-delete"],
 		Type:       f.values["type"],
 		Members:    f.values["members"],
-		Topic:      f.values["topic"],
-		Group:      f.values["group"],
 	})
 	printReport(stdout, report)
 	if err != nil {
@@ -320,8 +318,7 @@ func usage(w io.Writer) {
 Usage:
   gortisan create <name> [flags]        create a new project in ./<name>
       --module <path>                   Go module path (default: <name>)
-      --with <list>                     postgres, redis, kafka, metrics, all or none
-                                        (default: postgres,redis,metrics)
+      --with <list>                     postgres, redis, all or none (default: both)
       --no-tidy                         skip "go mod tidy"
 
   gortisan run [command] [-- args]      build and run cmd/<command>, restarting on changes
@@ -333,7 +330,6 @@ Usage:
   gortisan make:<kind> <name> [flags]   add code. A project has four layers:
         internal/domain/<subject>     the business (subjects can be grouped: sales/order)
         internal/api/<version>/       HTTP, one package per resource, named like its URL: users, orders
-        internal/worker/              Kafka consumers
         internal/platform/            infrastructure
 
     model <subject>                     <subject>.go, errors.go, store.go, repository.go,
@@ -351,9 +347,6 @@ Usage:
         --members "pending,paid=5,sent" integers count up from 1 or the previous value
         --type <type>                   string or an integer type (default: int64)
     cache <subject>/<name> [--type T]   a typed Redis cache in the domain's cache.go (redis)
-    worker <subject>/<name>             internal/worker/<subject>worker, and cmd/worker (kafka)
-        --topic <topic>  --group <group>
-    cdc <subject> [--topic <topic>]     change events of the model (kafka)
     middleware <name>                   internal/api/middleware/<name>.go
     client <name>                       internal/platform/<name>/client.go, an HTTP client
     migration <name>                    empty migrations/<time>_<name>.{up,down}.sql

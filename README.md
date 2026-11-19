@@ -23,7 +23,6 @@ time that you cannot read in your own repository.
 - [API versions](#api-versions)
 - [The database layer](#the-database-layer)
 - [Validation and errors](#validation-and-errors)
-- [Kafka: workers and CDC](#kafka-workers-and-cdc)
 - [Adding auth, Sentry, translations…](#adding-auth-sentry-translations)
 - [No magic: the rules](#no-magic-the-rules)
 - [Not supported yet](#not-supported-yet)
@@ -69,7 +68,6 @@ line in `main.go` — and gortisan never rewrites code you wrote.
 shop/
 ├── cmd/
 │   ├── api/main.go               the HTTP service: builds every dependency and starts it
-│   └── worker/main.go            the Kafka workers, one per process            (kafka)
 ├── internal/
 │   ├── domain/                   THE BUSINESS — no HTTP, no Kafka
 │   │   ├── user/
@@ -78,29 +76,26 @@ shop/
 │   │   │   ├── store.go          Store: what the service needs from storage
 │   │   │   ├── repository.go     Repository: implements Store; the table mapping is generated at its end
 │   │   │   ├── service.go        Service: the rules — the one entry point for everyone else
-│   │   │   └── status.go …       enums, validators, caches, CDC          (make:enum user/status …)
+│   │   │   └── status.go …       enums, validators, caches              (make:enum user/status …)
 │   │   └── sales/                subjects can be grouped once there are many
 │   │       ├── order/
 │   │       └── payment/
 │   ├── api/                      HTTP — an entry point into the domain
-│   │   ├── router.go             /ping, /health, /metrics, and one line per API version
+│   │   ├── router.go             /ping, /health, and one line per API version
 │   │   ├── middleware/
 │   │   ├── v1/
 │   │   │   ├── routes.go         every v1 endpoint, in one file
 │   │   │   ├── users/          handler.go  request.go  response.go
 │   │   │   └── sales/orders/
 │   │   └── v2/                   only what changed in v2
-│   ├── worker/                   Kafka — another entry point into the domain   (kafka)
-│   │   └── userworker/
 │   ├── platform/                 INFRASTRUCTURE — no business rules
 │   │   ├── config/  server/  validate/  health/   server: http.Server with read/write/idle timeouts
 │   │   ├── database/  database/orm/                                           (postgres)
-│   │   ├── cache/  kafka/  cdc/  metrics/                                     (by --with)
 │   │   └── payment/              clients for other services                  (make:client)
 │   └── arch_test.go              fails `go test` when a layer imports the wrong way
 ├── migrations/                   plain SQL, *.up.sql / *.down.sql
 ├── gortisan, gortisan.bat, gortisan.ps1
-└── go.mod                        echo, pgx, go-redis, kafka-go, prometheus — only what you picked
+└── go.mod                        echo, pgx, go-redis — only what you picked
 ```
 
 **Naming.** The domain package is singular — `user`, holding `user.User` and
@@ -119,7 +114,7 @@ uses (`app/`, `business/`, `foundation/`) — keep that working as the project g
 
 - **Twenty subjects or two hundred**, they all live in `domain/` and never mix with
   `config` or `database`; group them (`sales/order`) when one folder gets long.
-- **The domain does not know who calls it.** HTTP (`api/`), Kafka (`worker/`), a
+- **The domain does not know who calls it.** HTTP (`api/`), a queue consumer you add (`worker/`), a
   CLI or gRPC later — each is an entry point calling the same `user.Service`.
 - **Dependencies point one way,** and a test enforces it:
 
@@ -131,7 +126,7 @@ uses (`app/`, `business/`, `foundation/`) — keep that working as the project g
   imports the domain, or when `api/v2` imports `api/v1`.
 
 **Appended files.** Files that collect a kind of declaration — `handler.go`,
-`request.go`, `response.go`, `validator.go`, `cache.go`, `worker.go` — are created
+`request.go`, `response.go`, `validator.go`, `cache.go` — are created
 by the first command that needs them and appended to by the next:
 `make:handler v1/user/get` adds a method to `handler.go`, `GetRequest` to
 `request.go` and `GetResponse` to `response.go`, with the imports they need.
@@ -148,7 +143,6 @@ Nothing already in the file changes; a name that already exists is left alone.
 | `app/Http/Resources/UserResource.php` | `internal/api/v1/users/response.go` |
 | `routes/api.php` | `internal/api/v1/routes.go` |
 | `app/Http/Middleware` | `internal/api/middleware/` |
-| `app/Jobs`, queue workers | `internal/worker/`, `cmd/worker` |
 | `config/` | `internal/platform/config/` (and `.env`) |
 | `database/migrations` | `migrations/` |
 | `php artisan serve` | `./gortisan run` |
@@ -186,8 +180,6 @@ the same code, nobody needs gortisan installed, and `go.mod` stays untouched.
 | `make:validator <subject>/<name>` | a reusable rule (`validate.Rule`) in the domain's `validator.go` |
 | `make:enum <subject>/<name>` | `<name>.go` in the domain: constants, `String`, `Valid`, `Parse…`, the list of values |
 | `make:cache <subject>/<name>` | a typed Redis cache around a loader in the domain's `cache.go` *(redis)* |
-| `make:worker <subject>/<name>` | a Kafka consumer in `internal/worker/<subject>worker`, and `cmd/worker` *(kafka)* |
-| `make:cdc <subject>` | `cdc.go`: change events of the model to Kafka *(kafka, postgres)* |
 | `make:middleware <name>` | `internal/api/middleware/<name>.go` |
 | `make:client <name>` | `internal/platform/<name>/client.go`, a JSON HTTP client for another service |
 | `make:migration <name>` | empty `migrations/<time>_<name>.{up,down}.sql` |
@@ -204,7 +196,7 @@ handler guesses the REST route from the action: `list` → `GET /users`, `get` �
 | Flag | Command | Meaning |
 |---|---|---|
 | `--module <path>` | `create` | Go module path (default: the project name) |
-| `--with <list>` | `create` | any of `postgres`, `redis`, `kafka`, `metrics`; `all`; `none` (default: `postgres,redis,metrics`) |
+| `--with <list>` | `create` | `postgres`, `redis`, `all` (default) or `none` |
 | `--no-tidy` | `create` | skip `go mod tidy` |
 | `--no-watch` | `run` | run once |
 | `--fields "<list>"` | `make:model` | optional: columns to write in, e.g. `mobile:string,name:string` |
@@ -213,8 +205,6 @@ handler guesses the REST route from the action: `list` → `GET /users`, `get` �
 | `--members "<list>"` | `make:enum` | `pending,paid=5,sent`: integers count up from 1 or the previous value; strings default to the name |
 | `--type <type>` | `make:enum` | `string` or an integer type (default `int64`) |
 | `--type <type>` | `make:cache` | the cached Go type, e.g. `int64`, `[]string`, `*User` (default `string`) |
-| `--topic <topic>` | `make:worker`, `make:cdc` | topic consumed / published to |
-| `--group <group>` | `make:worker` | consumer group (default: `<subject>.<name>`) |
 | `--force` | `make:*` | overwrite whole files that exist |
 
 **Field types** for `--fields`: `string`/`text`, `int`/`int64`/`bigint`,
@@ -380,35 +370,6 @@ The server is a plain `http.Server` with `ReadHeaderTimeout`, `ReadTimeout`,
 slow or idle client cannot hold connections open. Panic recovery is a dozen lines
 in `internal/platform/server`, not a library.
 
-## Kafka: workers and CDC
-
-`create --with kafka` adds `internal/platform/kafka` (readers, writers, `Publish`)
-and `KAFKA_BROKERS`.
-
-`make:worker user/send_welcome --topic users.created` writes
-`internal/worker/userworker/worker.go` with a `Run(ctx)` loop: fetch, decode the
-JSON message, handle, commit. A failed message is logged and committed so it
-cannot block the partition — the loop is in your file, so change that if you need
-retries. The first worker also writes `cmd/worker/main.go`; each later one prints
-the `case` to add there. Run one process per worker:
-
-```bash
-./gortisan run worker -- user.send_welcome      # or: go run ./cmd/worker user.send_welcome
-```
-
-`make:cdc user` writes `internal/domain/user/cdc.go`, which publishes the user's
-changes keyed by id through `internal/platform/cdc`:
-
-```json
-{"reference_id": 42, "log_time": "2026-11-19 10:00:00.000000+03:30", "operation": "U",
- "old_data": {"id": 42, "name": "Ali"}, "new_data": {"id": 42, "name": "Reza"},
- "change_data": ["name"]}
-```
-
-List the fields consumers should see in `CDCData`; an update that changes none of
-them publishes nothing. Call `Created`, `Updated` and `Deleted` after the
-transaction commits.
-
 ## Adding auth, Sentry, translations…
 
 gortisan does not generate them, on purpose: every company does them differently,
@@ -458,9 +419,9 @@ Error reporting (Sentry and the like) goes the same way: a middleware passed to
 ## Dependencies
 
 A generated project depends on **echo v5** and, when you pick them, **pgx**
-(PostgreSQL), **go-redis**, **kafka-go** and **Prometheus**. Nothing else: error
-reporting (Sentry…), tracing (OpenTelemetry…), other databases or queues are
-yours to add when you need them — a middleware, a client in `platform/`, a line in
+(PostgreSQL) and **go-redis**. Nothing else: Kafka, metrics, error reporting
+(Sentry…), tracing (OpenTelemetry…), other databases or queues are yours to add
+when you need them — a middleware, a client in `platform/`, a line in
 `main.go`. A starter kit that pins third-party SDKs would break when they change.
 
 ## Not supported yet
@@ -481,3 +442,4 @@ Templates live in `internal/generator/templates` and are embedded in the binary.
 CI runs the full suite on Linux and Windows for every push and pull request.
 
 Releases are git tags: `git tag -a v0.0.4 -m v0.0.4 && git push origin v0.0.4`.
+

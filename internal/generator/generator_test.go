@@ -64,7 +64,7 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads modules")
 	}
-	for _, with := range []string{"all", "", "postgres", "redis", "kafka", "none"} {
+	for _, with := range []string{"all", "", "postgres", "redis", "none"} {
 		name := with
 		if name == "" {
 			name = "default"
@@ -129,15 +129,6 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 					steps = append(steps, step{kind: "cache", name: "order/detail", opts: MakeOptions{Type: "*Order"}})
 				}
 			}
-			if has("kafka") {
-				steps = append(steps,
-					step{kind: "worker", name: "order/send_notifications", opts: MakeOptions{Group: "notification_worker"}},
-					step{kind: "worker", name: "order/paid", opts: MakeOptions{Topic: "orders.paid"}},
-				)
-				if has("postgres") {
-					steps = append(steps, step{kind: "cdc", name: "order"}, step{kind: "cdc", name: "sales/payment"})
-				}
-			}
 			for _, s := range steps {
 				s.opts.Now = now
 				if _, err := Make(project, s.kind, s.name, s.opts); err != nil {
@@ -146,7 +137,7 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 			}
 
 			// Kinds that need a missing component must say so instead of writing broken code.
-			missing := map[string]string{"model": "postgres", "cache": "redis", "worker": "kafka", "cdc": "kafka"}
+			missing := map[string]string{"model": "postgres", "cache": "redis"}
 			for kind, component := range missing {
 				if !has(component) {
 					if _, err := Make(project, kind, "order/x", MakeOptions{}); err == nil {

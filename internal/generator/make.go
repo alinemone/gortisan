@@ -78,7 +78,6 @@ func (p *Project) require(path, why string) error {
 const (
 	ormPath      = "internal/platform/database/orm/orm.go"
 	redisPath    = "internal/platform/cache/redis.go"
-	kafkaPath    = "internal/platform/kafka/kafka.go"
 	validatePath = "internal/platform/validate/validate.go"
 )
 
@@ -92,10 +91,6 @@ type MakeOptions struct {
 	Type string
 	// Members are the enum values, e.g. "pending,paid=5".
 	Members string
-	// Topic and Group are a worker's Kafka topic and consumer group; Topic is
-	// also the topic a CDC publishes to.
-	Topic string
-	Group string
 	// Now stamps migration file names; time.Now when zero.
 	Now time.Time
 }
@@ -103,7 +98,7 @@ type MakeOptions struct {
 // MakeKinds are what `gortisan make` can write.
 var MakeKinds = []string{
 	"model", "service", "handler", "request", "response", "validator", "enum",
-	"cache", "worker", "cdc", "middleware", "client", "migration",
+	"cache", "middleware", "client", "migration",
 }
 
 // Make writes one building block of kind named name into p.
@@ -112,7 +107,6 @@ var MakeKinds = []string{
 //
 //	domain/<subject>/      the business: model, errors, store, repository, service
 //	api/<version>/<resources>/  HTTP (named like the URL, e.g. users): handler, request, response
-//	worker/<x>worker/      Kafka consumers
 //	platform/              infrastructure
 //
 // Subjects may be grouped: "sales/order" is internal/domain/sales/order.
@@ -136,10 +130,6 @@ func Make(p *Project, kind, name string, opts MakeOptions) (*Report, error) {
 		err = makeEnum(p, name, opts, report)
 	case "cache":
 		err = makeCache(p, name, opts, report)
-	case "worker":
-		err = makeWorker(p, name, opts, report)
-	case "cdc":
-		err = makeCDC(p, name, opts, report)
 	case "middleware":
 		err = makeMiddleware(p, name, opts, report)
 	case "client", "sdk":
@@ -249,17 +239,14 @@ type data struct {
 	Method       string
 	Path         string
 
-	Message      string
-	Base         string
-	Members      []EnumMember
-	Plural       string
-	Value        string
-	Prefix       string
-	Topic        string
-	Group        string
-	Func         string
-	Feature      string
-	WorkerImport string
+	Message string
+	Base    string
+	Members []EnumMember
+	Plural  string
+	Value   string
+	Prefix  string
+	Func    string
+	Feature string
 
 	Package   string
 	Title     string
@@ -616,80 +603,6 @@ func makeCache(p *Project, name string, opts MakeOptions, report *Report) error 
 		return err
 	}
 	report.next("build it in cmd/api/main.go: %s.New%s(rdb, time.Hour, load)", f.Pkg, d.Type)
-	return nil
-}
-
-func makeWorker(p *Project, name string, opts MakeOptions, report *Report) error {
-	if err := p.require(kafkaPath, "make:worker needs a project created with --with kafka"); err != nil {
-		return err
-	}
-	f, item, err := splitItem("worker", name)
-	if err != nil {
-		return err
-	}
-	item = strings.TrimSuffix(item, "_worker")
-	pkg := f.Pkg + "worker"
-	dir := "internal/worker/"
-	if f.Parent != "" {
-		dir += f.Parent + "/"
-	}
-	dir += pkg
-
-	d := f.data(p)
-	d.Pkg = pkg
-	d.Name = item
-	d.Type = pascal(item)
-	d.WorkerImport = p.Module + "/" + dir
-	d.Topic, d.Group = opts.Topic, opts.Group
-	if d.Topic == "" {
-		d.Topic = item
-	}
-	if d.Group == "" {
-		d.Group = f.Label() + "." + item
-	}
-	if err := writeOrAppend(p, dir+"/worker.go", "make/worker.go.tmpl", d, report); err != nil {
-		return err
-	}
-	mainFile := "cmd/worker/main.go"
-	label := f.Label() + "." + item
-	if !p.exists(mainFile) {
-		if err := renderAll(p.Root, []output{{mainFile, "make/worker_main.go.tmpl"}}, d, false, report); err != nil {
-			return err
-		}
-	} else {
-		report.next("add it to %s (import %q):\n\tcase %q:\n\t\treturn %s.New%s(cfg.Kafka, logger).Run(ctx)",
-			mainFile, d.WorkerImport, label, pkg, d.Type)
-	}
-	report.next("run it: ./gortisan run worker -- %s   (or go run ./cmd/worker %s)", label, label)
-	return nil
-}
-
-func makeCDC(p *Project, name string, opts MakeOptions, report *Report) error {
-	if err := p.require(kafkaPath, "make:cdc needs a project created with --with kafka"); err != nil {
-		return err
-	}
-	f, err := parseFeature(strings.TrimSuffix(snake(name), "_cdc"))
-	if err != nil {
-		return err
-	}
-	if err := p.require(f.Dir()+"/"+f.Pkg+".go", "run make:model "+f.Path+" first"); err != nil {
-		return err
-	}
-	d := f.data(p)
-	d.Topic = opts.Topic
-	if d.Topic == "" {
-		d.Topic = plural(f.Name)
-	}
-	if err := ensure(p, []output{
-		{"internal/platform/cdc/cdc.go", "make/cdc_base.go.tmpl"},
-		{"internal/platform/cdc/cdc_test.go", "make/cdc_test.go.tmpl"},
-	}, d, report); err != nil {
-		return err
-	}
-	if err := renderAll(p.Root, []output{{f.Dir() + "/cdc.go", "make/cdc.go.tmpl"}}, d, opts.Force, report); err != nil {
-		return err
-	}
-	report.next("build it in cmd/api/main.go: %s.NewCDC(kafka.NewWriter(cfg.Kafka)), and call Created/Updated/Deleted after each commit", f.Pkg)
 	return nil
 }
 

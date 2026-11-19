@@ -11,15 +11,9 @@ cp .env.example .env
                              # (or: go run ./cmd/api)
 curl localhost:8080/ping     # {"ping":"pong"}
 curl localhost:8080/health   # {"status":"pass","checks":{...}}
-{{- if .Metrics}}
-curl localhost:8080/metrics  # Prometheus; set METRICS_SECRET to require a bearer token
-{{- end}}
-```
-{{- if .Kafka}}
 
-Workers run in their own process: `./gortisan run worker -- <subject>.<name>` or
-`go run ./cmd/worker <subject>.<name>`.
-{{- end}}
+```
+
 
 ## Layout
 
@@ -34,12 +28,10 @@ internal/
       repository.go       implements the store; its table mapping is generated at the end
       service.go          the rules — what the API and workers call
   api/                    HTTP
-    router.go             /ping, /health{{if .Metrics}}, /metrics{{end}}, and one line per API version
+    router.go             /ping, /health, and one line per API version
     v1/routes.go          every v1 endpoint
     v1/users/           handler.go, request.go (inputs), response.go (outputs)
-{{- if .Kafka}}
-  worker/                 Kafka consumers
-{{- end}}
+
   platform/               infrastructure — no business rules
     config/ server/ validate/ health/
 {{- if .Postgres}}
@@ -48,19 +40,15 @@ internal/
 {{- if .Redis}}
     cache/
 {{- end}}
-{{- if .Kafka}}
-    kafka/
-{{- end}}
-{{- if .Metrics}}
-    metrics/
-{{- end}}
+
+
   arch_test.go            fails `go test` when a layer imports the wrong way
 {{- if .Postgres}}
 migrations/               SQL migrations, *.up.sql / *.down.sql
 {{- end}}
 ```
 
-Dependencies point one way — `api`{{if .Kafka}}, `worker`{{end}} → `domain` → `platform` —
+Dependencies point one way — `api` → `domain` → `platform` —
 and `internal/arch_test.go` enforces it, including that `api/v2` never imports
 `api/v1`.
 
@@ -111,10 +99,5 @@ no code imports it and `go.mod` does not list it.
 {{- if .Redis}}
 ./gortisan make:cache user/profile --type "*User"
 {{- end}}
-{{- if .Kafka}}
-./gortisan make:worker user/send_welcome --topic users.created
-{{- if .Postgres}}
-./gortisan make:cdc user
-{{- end}}
-{{- end}}
+
 ```

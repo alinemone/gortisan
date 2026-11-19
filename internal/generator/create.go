@@ -11,10 +11,10 @@ import (
 )
 
 // Components are the optional pieces `create --with` picks.
-var Components = []string{"postgres", "redis", "kafka", "metrics"}
+var Components = []string{"postgres", "redis"}
 
 // DefaultComponents are what create includes without --with.
-var DefaultComponents = []string{"postgres", "redis", "metrics"}
+var DefaultComponents = []string{"postgres", "redis"}
 
 // CreateOptions configure Create.
 type CreateOptions struct {
@@ -39,8 +39,6 @@ type projectData struct {
 	Title    string
 	Postgres bool
 	Redis    bool
-	Kafka    bool
-	Metrics  bool
 	Tool     string // ToolPackage@version
 	Version  string // the API version a routes file is for, e.g. v1
 }
@@ -73,8 +71,6 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		Title:    title(name),
 		Postgres: with["postgres"],
 		Redis:    with["redis"],
-		Kafka:    with["kafka"],
-		Metrics:  with["metrics"],
 		Tool:     ToolPackage + "@" + toolVersion(opts.Version),
 		Version:  "v1",
 	}
@@ -112,12 +108,6 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 	}
 	if data.Redis {
 		outputs = append(outputs, output{"internal/platform/cache/redis.go", "create/redis.go.tmpl"})
-	}
-	if data.Kafka {
-		outputs = append(outputs, output{"internal/platform/kafka/kafka.go", "create/kafka.go.tmpl"})
-	}
-	if data.Metrics {
-		outputs = append(outputs, output{"internal/platform/metrics/metrics.go", "create/metrics.go.tmpl"})
 	}
 
 	if err := renderAll(root, outputs, data, false, report); err != nil {

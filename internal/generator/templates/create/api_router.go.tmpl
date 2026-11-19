@@ -16,9 +16,7 @@ import (
 // Routes is everything the routes need. main.go builds it.
 type Routes struct {
 	Health *health.Handler
-{{- if .Metrics}}
-	Metrics echo.HandlerFunc
-{{- end}}
+
 	V1 v1.Services
 }
 
@@ -29,9 +27,7 @@ type Routes struct {
 func Register(e *echo.Echo, r Routes) {
 	e.GET("/ping", r.Health.Ping)
 	e.GET("/health", r.Health.Check)
-{{- if .Metrics}}
-	e.GET("/metrics", r.Metrics)
-{{- end}}
+
 
 	v1.Register(e.Group("/v1"), r.V1)
 }

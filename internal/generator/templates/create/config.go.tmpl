@@ -24,12 +24,8 @@ type Config struct {
 {{- if .Redis}}
 	Redis           Redis
 {{- end}}
-{{- if .Kafka}}
-	Kafka           Kafka
-{{- end}}
-{{- if .Metrics}}
-	MetricsSecret   string // /metrics requires "Authorization: Bearer <secret>" when set
-{{- end}}
+
+
 }
 {{- if .Postgres}}
 
@@ -56,13 +52,7 @@ type Redis struct {
 	DB       int
 }
 {{- end}}
-{{- if .Kafka}}
 
-// Kafka is the Kafka cluster.
-type Kafka struct {
-	Brokers []string
-}
-{{- end}}
 
 // HTTP is the server: its port and the timeouts that keep slow or idle
 // clients from holding connections open.
@@ -116,14 +106,8 @@ func Load() (Config, error) {
 			DB:       r.integer("REDIS_DB", 0),
 		},
 {{- end}}
-{{- if .Kafka}}
-		Kafka: Kafka{
-			Brokers: r.list("KAFKA_BROKERS", []string{"localhost:9092"}),
-		},
-{{- end}}
-{{- if .Metrics}}
-		MetricsSecret: r.str("METRICS_SECRET", ""),
-{{- end}}
+
+
 	}
 	return cfg, errors.Join(r.errs...)
 }

@@ -23,9 +23,7 @@ import (
 	"{{.Module}}/internal/platform/database"
 {{- end}}
 	"{{.Module}}/internal/platform/health"
-{{- if .Metrics}}
-	"{{.Module}}/internal/platform/metrics"
-{{- end}}
+
 	"{{.Module}}/internal/platform/server"
 )
 
@@ -61,20 +59,8 @@ func run() error {
 	}
 	defer rdb.Close()
 {{end}}
-{{- if .Metrics}}
-	m := metrics.New()
-{{- if .Postgres}}
-	m.RegisterPool(db)
-{{- end}}
-{{end}}
-{{- if .Kafka}}
-	// Kafka: build writers and readers here when something uses them, e.g.
-	//
-	//	producer := kafka.NewWriter(cfg.Kafka)
-	//	defer producer.Close()
-	//
-	// Workers run in their own process: go run ./cmd/worker <name>.
-{{end}}
+
+
 	// Domain services are built here, from the bottom up, and given to the
 	// api versions that use them, e.g.
 	//
@@ -82,13 +68,11 @@ func run() error {
 	//	... V1: v1.Services{User: users}
 	routes := api.Routes{
 		Health: health.NewHandler({{if .Postgres}}db{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}rdb{{end}}),
-{{- if .Metrics}}
-		Metrics: m.Handler(cfg.MetricsSecret),
-{{- end}}
+
 		V1: v1.Services{},
 	}
 
-	e := server.New(logger{{if .Metrics}}, m.Middleware(){{end}})
+	e := server.New(logger)
 	api.Register(e, routes)
 
 	logger.Info("listening", "addr", ":"+cfg.HTTP.Port)
