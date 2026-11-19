@@ -74,10 +74,10 @@ shop/
 ├── internal/
 │   ├── domain/                   THE BUSINESS — no HTTP, no Kafka
 │   │   ├── user/
-│   │   │   ├── user.go           type User: the table, a struct with db tags
+│   │   │   ├── user.go           type User: the table, a struct with bun tags
 │   │   │   ├── errors.go         ErrNotFound, ErrMobileTaken…: failures in business terms
 │   │   │   ├── store.go          Store: what the service needs from storage
-│   │   │   ├── repository.go     Repository: implements Store; the table mapping is generated at its end
+│   │   │   ├── repository.go     Repository: implements Store on orm.Repository[User]
 │   │   │   ├── service.go        Service: the rules — the one entry point for everyone else
 │   │   │   └── status.go …       enums, validators, caches              (make:enum user/status …)
 │   │   └── sales/                subjects can be grouped once there are many
@@ -93,12 +93,12 @@ shop/
 │   │   └── v2/                   only what changed in v2
 │   ├── platform/                 INFRASTRUCTURE — no business rules
 │   │   ├── config/  server/  validate/  health/   server: http.Server with read/write/idle timeouts
-│   │   ├── database/  database/orm/                                           (postgres)
+│   │   ├── database/  database/orm/  database/migrate/     bun over pgx (postgres)
 │   │   └── payment/              clients for other services                  (make:client)
 │   └── arch_test.go              fails `go test` when a layer imports the wrong way
 ├── migrations/                   plain SQL, *.up.sql / *.down.sql
 ├── gortisan, gortisan.bat, gortisan.ps1
-└── go.mod                        echo, pgx, go-redis — only what you picked
+└── go.mod                        echo, bun + pgx, go-redis — only what you picked
 ```
 
 **Naming.** The domain package is singular — `user`, holding `user.User` and
@@ -175,8 +175,7 @@ the same code, nobody needs gortisan installed, and `go.mod` stays untouched.
 | Command | What it does |
 |---|---|
 | `create <name>` | a new project in `./<name>` |
-| `run [command] [-- args]` | builds and runs `cmd/api` (or `cmd/<command>`), regenerating table mappings and restarting on every change to a `.go` file, `go.mod` or `.env`; `--no-watch` runs once |
-| `generate` | writes the table mapping of every `//gortisan:table` struct into its `repository.go`; `--check` fails if one is out of date (for CI) |
+| `run [command] [-- args]` | builds and runs `cmd/api` (or `cmd/<command>`), restarting on every change to a `.go` file, `go.mod` or `.env`; `--no-watch` runs once |
 | `make:model <subject>` | `user.go`, `errors.go`, `store.go`, `repository.go` in `internal/domain/<subject>`, and a create-table migration *(postgres)* |
 | `make:service <subject>` | `service.go`, built on the `Store` when there is one |
 | `make:handler <version>/<subject>/<action>` | a method in `internal/api/<version>/<resources>/handler.go`, its input in `request.go`, its output in `response.go`; a new version gets its `routes.go` |
@@ -266,76 +265,143 @@ holds only what changed; the architecture test stops it from importing v1.
 
 ## The database layer
 
-The struct is the only place a column is declared — like an ORM's tags, but read
-**when you generate**, not at run time:
+PostgreSQL is reached through [bun](https://bun.uptrace.dev) over the
+[pgx](https://github.com/jackc/pgx) driver. A model is a plain struct with bun
+tags — the struct is the only place a column is declared:
 
 ```go
 // internal/domain/user/user.go
-//gortisan:table users
 type User struct {
-	ID        int64      `db:"id,pk" json:"id"`
-	Mobile    string     `db:"mobile" json:"mobile"`
-	Name      string     `db:"name" json:"name"`
-	Note      string     `json:"note"`                         // no db tag: not a column
-	CreatedAt time.Time  `db:"created_at,default" json:"created_at"`
-	UpdatedAt time.Time  `db:"updated_at,default" json:"updated_at"`
-	DeletedAt *time.Time `db:"deleted_at,default" json:"deleted_at,omitempty"`
+	bun.BaseModel `bun:"table:users"`
+
+	ID        int64      `bun:"id,pk,autoincrement" json:"id"`
+	Mobile    string     `bun:"mobile" json:"mobile"`
+	Name      string     `bun:"name" json:"name"`
+	Note      string     `bun:"-" json:"note"`                 // not a column
+	CreatedAt time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+	DeletedAt *time.Time `bun:"deleted_at,soft_delete,nullzero" json:"deleted_at,omitempty"`
 }
 ```
 
-`gortisan generate` writes the mapping at the end of the package's
-`repository.go`, between two marker lines — plain code, with the columns, the
-`Scan` and the insert list spelled out. Nothing else in the file is touched:
-
-```go
-// gortisan:table User begin — generated from user.go by gortisan generate; edits here are overwritten.
-var userTable = orm.Table[User]{
-	Name:       "users",
-	PrimaryKey: "id",
-	Columns:    []string{"id", "mobile", "name", "created_at", "updated_at", "deleted_at"},
-	Scan: func(row orm.Scanner, m *User) error {
-		return row.Scan(&m.ID, &m.Mobile, &m.Name, &m.CreatedAt, &m.UpdatedAt, &m.DeletedAt)
-	},
-	InsertColumns:    []string{"mobile", "name"},
-	InsertValues:     func(m *User) []any { return []any{m.Mobile, m.Name} },
-	UpdatedAtColumn:  "updated_at",
-	SoftDeleteColumn: "deleted_at",
-}
-// gortisan:table User end
-```
-
-| In the struct | Means |
+| bun tag | Means |
 |---|---|
-| `//gortisan:table name` | this struct is a table |
-| `db:"name"` | a column, read and inserted |
-| `db:"id,pk"` | the primary key: read, never inserted |
-| `db:"created_at,default"` | filled by the database: read back after insert, never inserted |
-| no `db` tag, or `db:"-"` | not a column |
-| a column named `updated_at` / `deleted_at` | set to `now()` on update / soft delete |
+| `bun:"table:users"` on `bun.BaseModel` | the table |
+| `bun:"name"` | a column |
+| `bun:"id,pk,autoincrement"` | the primary key, filled by the database |
+| `nullzero` | a zero value is written as `NULL`, so the column default applies |
+| `soft_delete` | `Delete` sets the column instead of removing the row; selects skip such rows |
+| `bun:"-"` | not a column |
+| `rel:has-many,join:id=user_id` (also `has-one`, `belongs-to`, `m2m`) | a relation, loaded on request |
 
-To add a column, add a field and a migration. `make:model` and `gortisan run`
-regenerate the mapping for you; in CI, `gortisan generate --check` fails when one
-is out of date. Nothing inspects the struct at run time.
+`make:model user --fields "mobile:string,name:string" --soft-delete` writes the
+struct, the repository and the create-table migration. To add a column, add a
+field and a migration.
+
+`internal/platform/database/orm` is a small layer over bun that lives in your
+project. It imports only bun, pgx and the standard library — never your config
+or domain — and keeps no globals, so it can be moved to a module of its own
+unchanged:
+
+| File | What it holds |
+|---|---|
+| `orm.go` | package documentation |
+| `db.go` | `Options` (plain values), `Open` (pgx + bun, pinged), `NewDB`, `IDB` |
+| `repository.go` | `Repository[T]`: `Find`, `First`, `Get`, `Count`, `Exists`, `Create`, `CreateMany`, `Update`, `Delete`, `ForceDelete`, `Restore`, `Select`, `DB`, `WithTx`; fills `created_at` / `updated_at` |
+| `query.go` | scopes: `Where`, `WhereOr`, `WhereIn`, `OrderBy`, `Limit`, `Offset`, `Columns`, `WithTrashed`, `OnlyTrashed`, `ForUpdate` |
+| `relation.go` | `With(name, scopes...)`: load a relation, nested ones with a dot |
+| `pagination.go` | `Paginate` and `Page[T]` (`Total`, `Pages`, `HasNext`), `ForPage` |
+| `tx.go` | `InTx`, `InTxOptions`: explicit transactions (savepoints when nested) |
+| `errors.go` | `ErrNotFound` (also for `sql.ErrNoRows`), `IsNotFound`, `MapNotFound` |
+
+Its tests build SQL without a database; set `ORM_TEST_DSN` and they also run
+every operation against PostgreSQL in a throwaway schema.
 
 The `Service` depends on `Store`, an interface in `store.go` that `Repository`
 implements — so a service test can pass a fake store and run without a database.
 The repository returns the domain's `ErrNotFound`, never the orm's, so nothing
-above it depends on the storage. `internal/platform/database/orm` lives in your
-project; use it, write SQL by hand, or mix both:
+above it depends on the storage:
 
 ```go
-u, err := userTable.Find(ctx, r.db, id)
-users, err := userTable.Get(ctx, r.db,
-	orm.Where("name ILIKE ?", "%ali%").Where("mobile LIKE ?", "0912%").OrderBy("id DESC").Limit(20))
+// internal/domain/user/repository.go
+type Repository struct {
+	rows *orm.Repository[User]
+}
 
-var n int64
-err := r.db.QueryRow(ctx, `SELECT count(*) FROM users WHERE created_at >= $1`, since).Scan(&n)
+func NewRepository(db orm.IDB) *Repository {
+	return &Repository{rows: orm.NewRepository[User](db)}
+}
 
-err := database.InTx(ctx, db, func(tx pgx.Tx) error { // a transaction is a value, passed explicitly
-	if err := users.WithTx(tx).Create(ctx, u); err != nil {
-		return err
+func (r *Repository) Find(ctx context.Context, id int64) (*User, error) {
+	m, err := r.rows.Find(ctx, id)
+	return m, orm.MapNotFound(err, ErrNotFound)
+}
+
+func (r *Repository) Search(ctx context.Context, name string, page int) (orm.Page[User], error) {
+	return r.rows.Paginate(ctx, page, 20,
+		orm.Where("?TableAlias.name ILIKE ?", "%"+name+"%"),
+		orm.OrderBy("?TableAlias.id DESC"))
+}
+```
+
+Anything the repository has no method for is plain bun on the same connection:
+`r.rows.Select(&dest).ColumnExpr(...).Group(...).Scan(ctx)`, or
+`r.rows.DB().NewRaw("SELECT ...", args...).Scan(ctx, &dest)`.
+
+### Relations: invoice items with their statuses
+
+```go
+// internal/domain/invoice/invoice.go
+type Invoice struct {
+	bun.BaseModel `bun:"table:invoices"`
+	ID     int64        `bun:"id,pk,autoincrement" json:"id"`
+	Number string       `bun:"number" json:"number"`
+	Items  []*item.Item `bun:"rel:has-many,join:id=invoice_id" json:"items,omitempty"`
+}
+
+// internal/domain/invoice/item/item.go
+type Item struct {
+	bun.BaseModel `bun:"table:invoice_items"`
+	ID        int64            `bun:"id,pk,autoincrement" json:"id"`
+	InvoiceID int64            `bun:"invoice_id" json:"invoice_id"`
+	Title     string           `bun:"title" json:"title"`
+	Statuses  []*status.Status `bun:"rel:has-many,join:id=item_id" json:"statuses,omitempty"`
+}
+
+// internal/domain/invoice/item/status/status.go
+type Status struct {
+	bun.BaseModel `bun:"table:item_statuses"`
+	ID     int64  `bun:"id,pk,autoincrement" json:"id"`
+	ItemID int64  `bun:"item_id" json:"item_id"`
+	Name   string `bun:"name" json:"name"`
+}
+
+// internal/domain/invoice/repository.go: the invoice, its items, each with its statuses
+func (r *Repository) FindWithItems(ctx context.Context, id int64) (*Invoice, error) {
+	m, err := r.rows.Find(ctx, id,
+		orm.With("Items", orm.OrderBy("?TableAlias.id")),
+		orm.With("Items.Statuses", orm.OrderBy("?TableAlias.id")),
+	)
+	return m, orm.MapNotFound(err, ErrNotFound)
+}
+```
+
+This runs three queries — the invoice, its items, their statuses — never one per
+row. `make:model invoice`, `make:model invoice/item --table invoice_items` and
+`make:model invoice/item/status --table item_statuses` write the three packages;
+the relation fields are added by hand.
+
+### Transactions
+
+A transaction is a value, passed explicitly; repositories built on it with
+`WithTx` run their queries inside it:
+
+```go
+err := orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error {
+	if err := invoices.WithTx(tx).Create(ctx, inv); err != nil {
+		return err // rolls back
 	}
-	return payments.WithTx(tx).Create(ctx, p)
+	return payments.WithTx(tx).Create(ctx, p) // nil commits
 })
 ```
 
@@ -351,7 +417,7 @@ err := database.InTx(ctx, db, func(tx pgx.Tx) error { // a transaction is a valu
 ```
 
 The runner is part of your project — `internal/platform/database/migrate`, a few
-hundred lines over pgx — and `cmd/migrate` is a normal command you build and run
+hundred lines over `database/sql` (the bun DB's `db.DB`) — and `cmd/migrate` is a normal command you build and run
 in production before the new version serves traffic. The SQL files are embedded in
 the binary (`migrations/migrations.go`), so the image needs nothing else.
 
@@ -363,7 +429,7 @@ the binary (`migrations/migrations.go`), so the image needs nothing else.
   start together never apply a migration twice.
 - Two `make:migration`s in the same second get distinct versions.
 
-Seeders are functions in `internal/seed` that take a `database.DBTX` and use the
+Seeders are functions in `internal/seed` that take an `orm.IDB` and use the
 domain repositories; `cmd/seed` lists them in order and runs them in one
 transaction (`./gortisan db:seed users` runs one).
 
@@ -453,16 +519,16 @@ Error reporting (Sentry and the like) goes the same way: a middleware passed to
    `main.go` wires them; nothing is stored in or resolved from `context.Context`.
 3. **Layers point one way:** `api`, `worker` → `domain` → `platform`. `internal/arch_test.go`
    enforces it in every project.
-4. **No reflection in project code.** Config reads each variable by name; the table
-   mappings are generated code. (echo's `c.Bind` is the one place a library uses
-   reflection, and you can replace it.)
-5. **Transactions are values** — `pgx.Tx` passed to `repo.WithTx(tx)` — and **errors
+4. **Readable code over hidden machinery.** Config reads each variable by name.
+   The database goes through bun, a well-known library, and the thin `orm`
+   package on top of it is in your repository to read and change.
+5. **Transactions are values** — the `tx` of `orm.InTx`, passed to `repo.WithTx(tx)` — and **errors
    carry meaning**: the domain names them, the API maps them to statuses.
 
 ## Dependencies
 
-A generated project depends on **echo v5** and, when you pick them, **pgx**
-(PostgreSQL) and **go-redis**. Nothing else: Kafka, metrics, error reporting
+A generated project depends on **echo v5** and, when you pick them, **bun over
+pgx** (PostgreSQL) and **go-redis**. Nothing else: Kafka, metrics, error reporting
 (Sentry…), tracing (OpenTelemetry…), other databases or queues are yours to add
 when you need them — a middleware, a client in `platform/`, a line in
 `main.go`. A starter kit that pins third-party SDKs would break when they change.

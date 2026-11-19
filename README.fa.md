@@ -87,10 +87,10 @@ shop/
 ├── internal/
 │   ├── domain/                   کسب‌وکار — بدون HTTP
 │   │   ├── user/
-│   │   │   ├── user.go           نوع User: جدول، یک struct با تگ db
+│   │   │   ├── user.go           نوع User: جدول، یک struct با تگ bun
 │   │   │   ├── errors.go         ErrNotFound و…: خطاها به زبان کسب‌وکار
 │   │   │   ├── store.go          Store: آنچه سرویس از ذخیره‌سازی لازم دارد
-│   │   │   ├── repository.go     Repository: پیاده‌سازی Store؛ نگاشت جدول آخرش ساخته می‌شود
+│   │   │   ├── repository.go     Repository: پیاده‌سازی Store روی orm.Repository[User]
 │   │   │   ├── service.go        Service: قانون‌ها — تنها ورودی برای بقیه
 │   │   │   └── status.go …       enum، validator، cache        (make:enum user/status …)
 │   │   └── sales/                وقتی موضوع‌ها زیاد شد گروه‌بندی کنید
@@ -113,7 +113,7 @@ shop/
 │   └── arch_test.go              اگر لایه‌ای جهت اشتباه import کند، go test خطا می‌دهد
 ├── migrations/                   SQL خام، ‎*.up.sql و ‎*.down.sql (داخل باینری embed می‌شوند)
 ├── gortisan, gortisan.bat, gortisan.ps1
-└── go.mod                        فقط echo، pgx، go-redis — همان‌هایی که انتخاب کردید
+└── go.mod                        فقط echo، bun + pgx، go-redis — همان‌هایی که انتخاب کردید
 ```
 
 <div dir="rtl">
@@ -178,8 +178,7 @@ gortisan.bat list               # cmd
 | دستور | کار |
 |---|---|
 | `create <name>` | پروژهٔ جدید در `./<name>` |
-| `run [command] [-- args]` | `cmd/api` (یا `cmd/<command>`) را build و اجرا می‌کند، نگاشت جدول‌ها را دوباره می‌سازد و با هر تغییر در فایل `.go`، `go.mod` یا `.env` ری‌استارت می‌کند؛ `--no-watch` یک بار اجرا می‌کند |
-| `generate` | نگاشت جدول هر struct دارای `//gortisan:table` را در `repository.go` آن می‌نویسد؛ `--check` اگر قدیمی باشد خطا می‌دهد (برای CI) |
+| `run [command] [-- args]` | `cmd/api` (یا `cmd/<command>`) را build و اجرا می‌کند و با هر تغییر در فایل `.go`، `go.mod` یا `.env` ری‌استارت می‌کند؛ `--no-watch` یک بار اجرا می‌کند |
 | `make:model <subject>` | `user.go`، `errors.go`، `store.go` و `repository.go` در `internal/domain/<subject>`، و یک migration ساخت جدول *(postgres)* |
 | `make:service <subject>` | `service.go`، ساخته‌شده روی `Store` اگر وجود داشته باشد |
 | `make:handler <version>/<subject>/<action>` | یک متد در `internal/api/<version>/<resources>/handler.go`، ورودی‌اش در `request.go` و خروجی‌اش در `response.go`؛ نسخهٔ جدید `routes.go` خودش را می‌گیرد |
@@ -264,79 +263,143 @@ api.Register(e, api.Routes{
 
 ## لایهٔ دیتابیس
 
-struct تنها جایی است که یک ستون تعریف می‌شود — مثل تگ‌های یک ORM، با این فرق که **هنگام generate** خوانده می‌شود، نه در زمان اجرا:
+PostgreSQL از طریق [bun](https://bun.uptrace.dev) روی درایور [pgx](https://github.com/jackc/pgx) استفاده می‌شود. مدل یک struct ساده با تگ‌های bun است — struct تنها جایی است که یک ستون تعریف می‌شود:
 
 </div>
 
 ```go
 // internal/domain/user/user.go
-//gortisan:table users
 type User struct {
-	ID        int64      `db:"id,pk" json:"id"`
-	Mobile    string     `db:"mobile" json:"mobile"`
-	Name      string     `db:"name" json:"name"`
-	Note      string     `json:"note"`                         // بدون تگ db: ستون نیست
-	CreatedAt time.Time  `db:"created_at,default" json:"created_at"`
-	UpdatedAt time.Time  `db:"updated_at,default" json:"updated_at"`
-	DeletedAt *time.Time `db:"deleted_at,default" json:"deleted_at,omitempty"`
+	bun.BaseModel `bun:"table:users"`
+
+	ID        int64      `bun:"id,pk,autoincrement" json:"id"`
+	Mobile    string     `bun:"mobile" json:"mobile"`
+	Name      string     `bun:"name" json:"name"`
+	Note      string     `bun:"-" json:"note"`                 // ستون نیست
+	CreatedAt time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+	DeletedAt *time.Time `bun:"deleted_at,soft_delete,nullzero" json:"deleted_at,omitempty"`
 }
 ```
 
 <div dir="rtl">
 
-`gortisan generate` نگاشت را در انتهای `repository.go` همان پکیج، بین دو خط نشانه می‌نویسد — کد ساده، با ستون‌ها، `Scan` و فهرست insert به‌صراحت. بقیهٔ فایل دست نمی‌خورد:
-
-</div>
-
-```go
-// gortisan:table User begin — generated from user.go by gortisan generate; edits here are overwritten.
-var userTable = orm.Table[User]{
-	Name:       "users",
-	PrimaryKey: "id",
-	Columns:    []string{"id", "mobile", "name", "created_at", "updated_at", "deleted_at"},
-	Scan: func(row orm.Scanner, m *User) error {
-		return row.Scan(&m.ID, &m.Mobile, &m.Name, &m.CreatedAt, &m.UpdatedAt, &m.DeletedAt)
-	},
-	InsertColumns:    []string{"mobile", "name"},
-	InsertValues:     func(m *User) []any { return []any{m.Mobile, m.Name} },
-	UpdatedAtColumn:  "updated_at",
-	SoftDeleteColumn: "deleted_at",
-}
-// gortisan:table User end
-```
-
-<div dir="rtl">
-
-| در struct | معنی |
+| تگ bun | معنی |
 |---|---|
-| `//gortisan:table name` | این struct یک جدول است |
-| `db:"name"` | یک ستون؛ خوانده و insert می‌شود |
-| `db:"id,pk"` | کلید اصلی: خوانده می‌شود، هیچ‌وقت insert نمی‌شود |
-| `db:"created_at,default"` | دیتابیس پرش می‌کند: بعد از insert خوانده می‌شود، insert نمی‌شود |
-| بدون تگ `db` یا `db:"-"` | ستون نیست |
-| ستونی به اسم `updated_at` / `deleted_at` | در update / soft delete برابر `now()` می‌شود |
+| `bun:"table:users"` روی `bun.BaseModel` | جدول |
+| `bun:"name"` | یک ستون |
+| `bun:"id,pk,autoincrement"` | کلید اصلی که دیتابیس پرش می‌کند |
+| `nullzero` | مقدار صفر به‌صورت `NULL` نوشته می‌شود تا مقدار پیش‌فرض ستون اعمال شود |
+| `soft_delete` | `Delete` به‌جای حذف سطر این ستون را پر می‌کند و selectها چنین سطرهایی را نادیده می‌گیرند |
+| `bun:"-"` | ستون نیست |
+| `rel:has-many,join:id=user_id` (و `has-one`، `belongs-to`، `m2m`) | یک رابطه که هر وقت بخواهید بارگذاری می‌شود |
 
-برای اضافه کردن ستون، یک فیلد و یک migration اضافه کنید. `make:model` و `gortisan run` نگاشت را برایتان دوباره می‌سازند؛ در CI، `gortisan generate --check` اگر نگاشتی قدیمی باشد خطا می‌دهد. هیچ چیزی در زمان اجرا struct را بررسی نمی‌کند.
+`make:model user --fields "mobile:string,name:string" --soft-delete` struct، repository و migration ساخت جدول را می‌نویسد. برای اضافه کردن ستون، یک فیلد و یک migration اضافه کنید.
 
-`Service` به `Store` وابسته است، یک interface در `store.go` که `Repository` پیاده‌اش می‌کند — پس تست سرویس می‌تواند یک store جعلی بدهد و بدون دیتابیس اجرا شود. repository خطای `ErrNotFound` خود domain را برمی‌گرداند، نه خطای orm را؛ پس هیچ چیز بالای آن به ذخیره‌سازی وابسته نیست. `internal/platform/database/orm` داخل پروژهٔ خودتان است؛ از آن استفاده کنید، SQL دستی بنویسید، یا هر دو را با هم:
+`internal/platform/database/orm` لایه‌ای کوچک روی bun است که داخل پروژهٔ خودتان قرار دارد. فقط bun، pgx و کتابخانهٔ استاندارد را import می‌کند — هیچ‌وقت config یا domain شما را — و هیچ متغیر سراسری ندارد، پس می‌شود آن را بدون هیچ تغییری به یک ماژول جدا منتقل کرد:
+
+| فایل | محتوا |
+|---|---|
+| `orm.go` | مستندات پکیج |
+| `db.go` | `Options` (مقادیر ساده)، `Open` (pgx + bun، با ping)، `NewDB`، `IDB` |
+| `repository.go` | `Repository[T]`: `Find`، `First`، `Get`، `Count`، `Exists`، `Create`، `CreateMany`، `Update`، `Delete`، `ForceDelete`، `Restore`، `Select`، `DB`، `WithTx`؛ `created_at` و `updated_at` را پر می‌کند |
+| `query.go` | scopeها: `Where`، `WhereOr`، `WhereIn`، `OrderBy`، `Limit`، `Offset`، `Columns`، `WithTrashed`، `OnlyTrashed`، `ForUpdate` |
+| `relation.go` | `With(name, scopes...)`: بارگذاری یک رابطه، و رابطه‌های تودرتو با نقطه |
+| `pagination.go` | `Paginate` و `Page[T]` (`Total`، `Pages`، `HasNext`)، `ForPage` |
+| `tx.go` | `InTx` و `InTxOptions`: تراکنش صریح (و savepoint وقتی تودرتو باشد) |
+| `errors.go` | `ErrNotFound` (برای `sql.ErrNoRows` هم)، `IsNotFound`، `MapNotFound` |
+
+تست‌های آن بدون دیتابیس SQL می‌سازند؛ اگر `ORM_TEST_DSN` را تنظیم کنید، همهٔ عملیات را روی PostgreSQL در یک schema موقت هم اجرا می‌کنند.
+
+`Service` به `Store` وابسته است، یک interface در `store.go` که `Repository` پیاده‌اش می‌کند — پس تست سرویس می‌تواند یک store جعلی بدهد و بدون دیتابیس اجرا شود. repository خطای `ErrNotFound` خود domain را برمی‌گرداند، نه خطای orm را؛ پس هیچ چیز بالای آن به ذخیره‌سازی وابسته نیست:
 
 </div>
 
 ```go
-u, err := userTable.Find(ctx, r.db, id)
-users, err := userTable.Get(ctx, r.db,
-	orm.Where("name ILIKE ?", "%ali%").Where("mobile LIKE ?", "0912%").OrderBy("id DESC").Limit(20))
+// internal/domain/user/repository.go
+type Repository struct {
+	rows *orm.Repository[User]
+}
 
-var n int64
-err := r.db.QueryRow(ctx, `SELECT count(*) FROM users WHERE created_at >= $1`, since).Scan(&n)
+func NewRepository(db orm.IDB) *Repository {
+	return &Repository{rows: orm.NewRepository[User](db)}
+}
 
-err := database.InTx(ctx, db, func(tx pgx.Tx) error { // تراکنش یک مقدار است و صریح پاس داده می‌شود
-	if err := users.WithTx(tx).Create(ctx, u); err != nil {
-		return err
+func (r *Repository) Find(ctx context.Context, id int64) (*User, error) {
+	m, err := r.rows.Find(ctx, id)
+	return m, orm.MapNotFound(err, ErrNotFound)
+}
+
+func (r *Repository) Search(ctx context.Context, name string, page int) (orm.Page[User], error) {
+	return r.rows.Paginate(ctx, page, 20,
+		orm.Where("?TableAlias.name ILIKE ?", "%"+name+"%"),
+		orm.OrderBy("?TableAlias.id DESC"))
+}
+```
+
+<div dir="rtl">
+
+هر کوئری‌ای که repository متدی برایش ندارد، bun ساده روی همان اتصال است: `r.rows.Select(&dest).ColumnExpr(...).Group(...).Scan(ctx)` یا `r.rows.DB().NewRaw("SELECT ...", args...).Scan(ctx, &dest)`.
+
+### رابطه‌ها: آیتم‌های فاکتور با وضعیت‌هایشان
+
+</div>
+
+```go
+// internal/domain/invoice/invoice.go
+type Invoice struct {
+	bun.BaseModel `bun:"table:invoices"`
+	ID     int64        `bun:"id,pk,autoincrement" json:"id"`
+	Number string       `bun:"number" json:"number"`
+	Items  []*item.Item `bun:"rel:has-many,join:id=invoice_id" json:"items,omitempty"`
+}
+
+// internal/domain/invoice/item/item.go
+type Item struct {
+	bun.BaseModel `bun:"table:invoice_items"`
+	ID        int64            `bun:"id,pk,autoincrement" json:"id"`
+	InvoiceID int64            `bun:"invoice_id" json:"invoice_id"`
+	Title     string           `bun:"title" json:"title"`
+	Statuses  []*status.Status `bun:"rel:has-many,join:id=item_id" json:"statuses,omitempty"`
+}
+
+// internal/domain/invoice/item/status/status.go
+type Status struct {
+	bun.BaseModel `bun:"table:item_statuses"`
+	ID     int64  `bun:"id,pk,autoincrement" json:"id"`
+	ItemID int64  `bun:"item_id" json:"item_id"`
+	Name   string `bun:"name" json:"name"`
+}
+
+// internal/domain/invoice/repository.go: فاکتور، آیتم‌هایش، و وضعیت‌های هر آیتم
+func (r *Repository) FindWithItems(ctx context.Context, id int64) (*Invoice, error) {
+	m, err := r.rows.Find(ctx, id,
+		orm.With("Items", orm.OrderBy("?TableAlias.id")),
+		orm.With("Items.Statuses", orm.OrderBy("?TableAlias.id")),
+	)
+	return m, orm.MapNotFound(err, ErrNotFound)
+}
+```
+
+<div dir="rtl">
+
+این کار سه کوئری اجرا می‌کند — فاکتور، آیتم‌هایش و وضعیت‌هایشان — نه یک کوئری برای هر سطر. `make:model invoice`، `make:model invoice/item --table invoice_items` و `make:model invoice/item/status --table item_statuses` سه پکیج را می‌نویسند؛ فیلدهای رابطه را دستی اضافه می‌کنید.
+
+### تراکنش‌ها
+
+تراکنش یک مقدار است و صریح پاس داده می‌شود؛ repositoryهایی که با `WithTx` روی آن ساخته شوند کوئری‌هایشان را داخل آن اجرا می‌کنند:
+
+</div>
+
+```go
+err := orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error {
+	if err := invoices.WithTx(tx).Create(ctx, inv); err != nil {
+		return err // rollback
 	}
-	return payments.WithTx(tx).Create(ctx, p)
+	return payments.WithTx(tx).Create(ctx, p) // nil یعنی commit
 })
 ```
+
 
 <div dir="rtl">
 
@@ -355,14 +418,14 @@ err := database.InTx(ctx, db, func(tx pgx.Tx) error { // تراکنش یک مق�
 
 <div dir="rtl">
 
-اجراکنندهٔ migration بخشی از پروژهٔ خودتان است — `internal/platform/database/migrate`، چند صد خط روی pgx — و `cmd/migrate` یک دستور معمولی است که در production قبل از اینکه نسخهٔ جدید ترافیک بگیرد build و اجرایش می‌کنید. فایل‌های SQL داخل باینری embed می‌شوند (`migrations/migrations.go`)، پس image به چیز دیگری نیاز ندارد.
+اجراکنندهٔ migration بخشی از پروژهٔ خودتان است — `internal/platform/database/migrate`، چند صد خط روی `database/sql` (همان `db.DB` در bun) — و `cmd/migrate` یک دستور معمولی است که در production قبل از اینکه نسخهٔ جدید ترافیک بگیرد build و اجرایش می‌کنید. فایل‌های SQL داخل باینری embed می‌شوند (`migrations/migrations.go`)، پس image به چیز دیگری نیاز ندارد.
 
 - migrationهای اعمال‌شده با یک شمارهٔ **batch** در `schema_migrations` ثبت می‌شوند؛ `migrate:rollback` مثل لاراول batchها را کامل، از جدیدترین، برمی‌گرداند.
 - هر migration همراه ثبتش **در یک تراکنش** اجرا می‌شود. فایلی که خط `-- migrate:no-transaction` دارد بیرون از تراکنش اجرا می‌شود؛ برای `CREATE INDEX CONCURRENTLY`.
 - یک **advisory lock در Postgres** باعث می‌شود فقط یک پروسه در هر لحظه migrate کند؛ پس replicaهایی که هم‌زمان بالا می‌آیند هیچ migrationی را دو بار اجرا نمی‌کنند.
 - دو `make:migration` در یک ثانیه نسخه‌های متفاوت می‌گیرند.
 
-seederها تابع‌هایی در `internal/seed` هستند که یک `database.DBTX` می‌گیرند و از repositoryهای domain استفاده می‌کنند؛ `cmd/seed` آن‌ها را به ترتیب فهرست می‌کند و در یک تراکنش اجرا می‌کند (`./gortisan db:seed users` فقط یکی را اجرا می‌کند).
+seederها تابع‌هایی در `internal/seed` هستند که یک `orm.IDB` می‌گیرند و از repositoryهای domain استفاده می‌کنند؛ `cmd/seed` آن‌ها را به ترتیب فهرست می‌کند و در یک تراکنش اجرا می‌کند (`./gortisan db:seed users` فقط یکی را اجرا می‌کند).
 
 ## اعتبارسنجی و خطاها
 
@@ -449,12 +512,12 @@ g.Use(middleware.Authenticate(s.Tokens))
 1. **هیچ importی از تولیدکننده نیست.** فقط پکیج‌های خود پروژه و کتابخانه‌هایی که انتخاب کرده‌اید. تست‌های gortisan این را در هر build بررسی می‌کنند.
 2. **وابستگی‌ها پاس داده می‌شوند، جست‌وجو نمی‌شوند.** constructorها چیزی را که لازم دارند می‌گیرند و `main.go` آن‌ها را به هم وصل می‌کند؛ هیچ چیز در `context.Context` ذخیره یا از آن خوانده نمی‌شود.
 3. **لایه‌ها یک‌طرفه‌اند:** `api` و `worker` ← `domain` ← `platform`. `internal/arch_test.go` این را در هر پروژه اجبار می‌کند.
-4. **در کد پروژه reflection نیست.** config هر متغیر را با اسمش می‌خواند؛ نگاشت جدول‌ها کد تولیدشده است. (`c.Bind` در echo تنها جایی است که یک کتابخانه از reflection استفاده می‌کند، و می‌توانید جایگزینش کنید.)
-5. **تراکنش‌ها مقدارند** — `pgx.Tx` که به `repo.WithTx(tx)` داده می‌شود — و **خطاها معنی دارند**: domain اسمشان را می‌گذارد و API آن‌ها را به status تبدیل می‌کند.
+4. **کد خوانا به‌جای سازوکار پنهان.** config هر متغیر را با اسمش می‌خواند. دیتابیس از bun، یک کتابخانهٔ شناخته‌شده، استفاده می‌کند و پکیج نازک `orm` روی آن داخل مخزن خودتان است تا بخوانید و تغییرش دهید.
+5. **تراکنش‌ها مقدارند** — `tx` در `orm.InTx` که به `repo.WithTx(tx)` داده می‌شود — و **خطاها معنی دارند**: domain اسمشان را می‌گذارد و API آن‌ها را به status تبدیل می‌کند.
 
 ## وابستگی‌ها
 
-پروژهٔ تولیدشده به **echo v5** وابسته است و اگر انتخابشان کنید به **pgx** (PostgreSQL) و **go-redis**. هیچ چیز دیگر: Kafka، متریک، گزارش خطا (Sentry…)، tracing (OpenTelemetry…)، دیتابیس‌ها یا صف‌های دیگر را هر وقت لازم داشتید خودتان اضافه کنید — یک middleware، یک کلاینت در `platform/`، یک خط در `main.go`. یک starter kit که SDKهای دیگران را پین کند، با تغییر آن‌ها می‌شکند.
+پروژهٔ تولیدشده به **echo v5** وابسته است و اگر انتخابشان کنید به **bun روی pgx** (PostgreSQL) و **go-redis**. هیچ چیز دیگر: Kafka، متریک، گزارش خطا (Sentry…)، tracing (OpenTelemetry…)، دیتابیس‌ها یا صف‌های دیگر را هر وقت لازم داشتید خودتان اضافه کنید — یک middleware، یک کلاینت در `platform/`، یک خط در `main.go`. یک starter kit که SDKهای دیگران را پین کند، با تغییر آن‌ها می‌شکند.
 
 ## هنوز پشتیبانی نمی‌شود
 
