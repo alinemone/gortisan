@@ -23,6 +23,7 @@ time that you cannot read in your own repository.
 - [API versions](#api-versions)
 - [The database layer](#the-database-layer)
 - [Validation and errors](#validation-and-errors)
+- [Migrations and seeders](#migrations-and-seeders)
 - [Adding auth, Sentry, translations…](#adding-auth-sentry-translations)
 - [No magic: the rules](#no-magic-the-rules)
 - [Not supported yet](#not-supported-yet)
@@ -145,6 +146,8 @@ Nothing already in the file changes; a name that already exists is left alone.
 | `app/Http/Middleware` | `internal/api/middleware/` |
 | `config/` | `internal/platform/config/` (and `.env`) |
 | `database/migrations` | `migrations/` |
+| `database/seeders` | `internal/seed/` |
+| `php artisan migrate` / `migrate:rollback` / `db:seed` | `./gortisan migrate` / `migrate:rollback` / `db:seed` |
 | `php artisan serve` | `./gortisan run` |
 | `php artisan make:model User -m` | `./gortisan make:model user` |
 | `php artisan make:controller` | `./gortisan make:handler v1/user/list` |
@@ -183,6 +186,12 @@ the same code, nobody needs gortisan installed, and `go.mod` stays untouched.
 | `make:middleware <name>` | `internal/api/middleware/<name>.go` |
 | `make:client <name>` | `internal/platform/<name>/client.go`, a JSON HTTP client for another service |
 | `make:migration <name>` | empty `migrations/<time>_<name>.{up,down}.sql` |
+| `make:seeder <name>` | `internal/seed/<name>.go`, and `cmd/seed` the first time |
+| `migrate` | applies pending migrations as one batch (`go run ./cmd/migrate`) |
+| `migrate:rollback [batches]` | undoes the last batch, or several |
+| `migrate:status` | lists every migration and whether it ran |
+| `migrate:fresh --force` | drops every table and migrates again — development only |
+| `db:seed [name]` | runs the seeders in one transaction (`go run ./cmd/seed`) |
 | `list`, `help`, `version` | |
 
 A subject may be grouped — `make:model sales/order`, `make:handler v1/sales/order/list`.
@@ -324,6 +333,34 @@ err := database.InTx(ctx, db, func(tx pgx.Tx) error { // a transaction is a valu
 })
 ```
 
+## Migrations and seeders
+
+```bash
+./gortisan make:model user                 # also writes migrations/<time>_create_users_table.{up,down}.sql
+./gortisan make:migration add_index_to_users
+./gortisan migrate                         # apply what is pending
+./gortisan migrate:status
+./gortisan migrate:rollback                # undo the last batch
+./gortisan make:seeder users && ./gortisan db:seed
+```
+
+The runner is part of your project — `internal/platform/database/migrate`, a few
+hundred lines over pgx — and `cmd/migrate` is a normal command you build and run
+in production before the new version serves traffic. The SQL files are embedded in
+the binary (`migrations/migrations.go`), so the image needs nothing else.
+
+- Applied migrations are recorded in `schema_migrations` with a **batch** number;
+  `migrate:rollback` undoes whole batches, newest first, like Laravel.
+- Each migration runs **in a transaction** with its bookkeeping. A file containing
+  `-- migrate:no-transaction` runs outside one, for `CREATE INDEX CONCURRENTLY`.
+- A **Postgres advisory lock** lets one process migrate at a time, so replicas that
+  start together never apply a migration twice.
+- Two `make:migration`s in the same second get distinct versions.
+
+Seeders are functions in `internal/seed` that take a `database.DBTX` and use the
+domain repositories; `cmd/seed` lists them in order and runs them in one
+transaction (`./gortisan db:seed users` runs one).
+
 ## Validation and errors
 
 A request collects every problem and returns them together; what a check needs
@@ -426,7 +463,6 @@ when you need them — a middleware, a client in `platform/`, a line in
 
 ## Not supported yet
 
-- `migrate` / `migrate:rollback` / `migrate:status` and seeders (next)
 - `make:test`, `route:list`, OpenAPI / Swagger docs
 - running `create` again in an existing project to add a missing piece
 

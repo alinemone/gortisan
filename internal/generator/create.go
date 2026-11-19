@@ -103,7 +103,10 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 			output{"internal/platform/database/orm/orm.go", "create/orm.go.tmpl"},
 			output{"internal/platform/database/orm/query.go", "create/query.go.tmpl"},
 			output{"internal/platform/database/orm/query_test.go", "create/query_test.go.tmpl"},
-			output{"migrations/.gitkeep", "create/gitkeep.tmpl"},
+			output{"migrations/migrations.go", "create/migrations_embed.go.tmpl"},
+			output{"internal/platform/database/migrate/migrate.go", "create/migrate.go.tmpl"},
+			output{"internal/platform/database/migrate/migrate_test.go", "create/migrate_test.go.tmpl"},
+			output{"cmd/migrate/main.go", "create/migrate_main.go.tmpl"},
 		)
 	}
 	if data.Redis {

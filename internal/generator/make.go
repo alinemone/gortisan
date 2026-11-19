@@ -98,7 +98,7 @@ type MakeOptions struct {
 // MakeKinds are what `gortisan make` can write.
 var MakeKinds = []string{
 	"model", "service", "handler", "request", "response", "validator", "enum",
-	"cache", "middleware", "client", "migration",
+	"cache", "middleware", "client", "migration", "seeder",
 }
 
 // Make writes one building block of kind named name into p.
@@ -136,6 +136,8 @@ func Make(p *Project, kind, name string, opts MakeOptions) (*Report, error) {
 		err = makeClient(p, name, opts, report)
 	case "migration":
 		err = makeMigration(p, name, opts, report)
+	case "seeder":
+		err = makeSeeder(p, name, opts, report)
 	default:
 		err = fmt.Errorf("unknown kind %q; choose from %s", kind, strings.Join(MakeKinds, ", "))
 	}
@@ -313,7 +315,7 @@ func makeModel(p *Project, name string, opts MakeOptions, report *Report) error 
 		d.JSON = d.JSON || field.JSON
 	}
 	dir := f.Dir()
-	stamp := migrationStamp(opts.Now)
+	stamp := freshStamp(p, opts.Now)
 	if err := renderAll(p.Root, []output{
 		{dir + "/" + f.Pkg + ".go", "make/model.go.tmpl"},
 		{dir + "/errors.go", "make/errors.go.tmpl"},
@@ -329,7 +331,7 @@ func makeModel(p *Project, name string, opts MakeOptions, report *Report) error 
 	if err != nil {
 		return err
 	}
-	report.next("apply migrations/%s_create_%s_table.up.sql to the database", stamp, d.Table)
+	report.next("create the table: ./gortisan migrate   (migrations/%s_create_%s_table.up.sql)", stamp, d.Table)
 	report.next("then: ./gortisan make:service %s", f.Path)
 	return nil
 }
@@ -646,11 +648,32 @@ func makeMigration(p *Project, name string, opts MakeOptions, report *Report) er
 	if err != nil {
 		return err
 	}
-	stamp := migrationStamp(opts.Now)
+	stamp := freshStamp(p, opts.Now)
 	return renderAll(p.Root, []output{
 		{"migrations/" + stamp + "_" + n + ".up.sql", "make/migration.up.sql.tmpl"},
 		{"migrations/" + stamp + "_" + n + ".down.sql", "make/migration.down.sql.tmpl"},
 	}, data{Name: n}, opts.Force, report)
+}
+
+func makeSeeder(p *Project, name string, opts MakeOptions, report *Report) error {
+	if err := p.require(ormPath, "make:seeder needs a project created with postgres"); err != nil {
+		return err
+	}
+	n, err := identifier("seeder", strings.TrimSuffix(snake(name), "_seeder"))
+	if err != nil {
+		return err
+	}
+	d := data{Module: p.Module, Name: n, Type: pascal(n)}
+	if err := renderAll(p.Root, []output{{"internal/seed/" + n + ".go", "make/seeder.go.tmpl"}}, d, opts.Force, report); err != nil {
+		return err
+	}
+	if p.exists("cmd/seed/main.go") {
+		report.next("list it in cmd/seed/main.go: {%q, seed.%s},", n, d.Type)
+	} else if err := renderAll(p.Root, []output{{"cmd/seed/main.go", "make/seed_main.go.tmpl"}}, d, false, report); err != nil {
+		return err
+	}
+	report.next("run it: ./gortisan db:seed   (or ./gortisan db:seed %s)", n)
+	return nil
 }
 
 func migrationStamp(now time.Time) string {
@@ -658,6 +681,22 @@ func migrationStamp(now time.Time) string {
 		now = time.Now()
 	}
 	return now.UTC().Format("20060102150405")
+}
+
+// freshStamp is migrationStamp moved forward a second at a time until no
+// migration uses it: two make commands in the same second must not share a
+// version, or the migrator refuses to run.
+func freshStamp(p *Project, now time.Time) string {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	for {
+		stamp := migrationStamp(now)
+		if matches, _ := filepath.Glob(filepath.Join(p.Root, "migrations", stamp+"_*")); len(matches) == 0 {
+			return stamp
+		}
+		now = now.Add(time.Second)
+	}
 }
 
 func (r *Report) merge(other *Report) {

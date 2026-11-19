@@ -348,3 +348,29 @@ func TestCreateRefusesNonEmptyDir(t *testing.T) {
 		t.Fatal("want an error for a non-empty directory")
 	}
 }
+
+func TestMigrationsInTheSameSecondGetDistinctVersions(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/x\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := FindProject(root)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	for _, name := range []string{"first", "second", "third"} {
+		if _, err := Make(p, "migration", name, MakeOptions{Now: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ups, _ := filepath.Glob(filepath.Join(root, "migrations", "*.up.sql"))
+	seen := map[string]bool{}
+	for _, up := range ups {
+		version, _, _ := strings.Cut(filepath.Base(up), "_")
+		if seen[version] {
+			t.Fatalf("version %s used twice: %v", version, ups)
+		}
+		seen[version] = true
+	}
+	if len(seen) != 3 {
+		t.Fatalf("want 3 versions, got %v", ups)
+	}
+}
