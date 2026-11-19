@@ -23,6 +23,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 
 	"github.com/alinemone/gortisan/internal/generator"
 	"github.com/alinemone/gortisan/internal/runner"
@@ -46,6 +47,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runProject("migrate", append([]string{strings.TrimPrefix(args[0], "migrate:")}, args[1:]...), stdout, stderr)
 	case args[0] == "db:seed":
 		return runProject("seed", args[1:], stdout, stderr)
+	case args[0] == "route:list" || args[0] == "routes":
+		return runRouteList(stdout, stderr)
 	}
 
 	// make:handler is the artisan-style spelling of "make handler".
@@ -404,6 +407,7 @@ Usage:
   gortisan migrate:status               list migrations and whether they ran
   gortisan migrate:fresh --force        drop every table and migrate again (development only)
   gortisan db:seed [name]               run the seeders of internal/seed (go run ./cmd/seed)
+  gortisan route:list                   every route: method, path, handler, file
 
   gortisan generate [--check]           write the table mapping of every //gortisan:table
                                         struct into its repository.go
@@ -443,4 +447,31 @@ Usage:
 
   gortisan list | help | version
 `)
+}
+
+// runRouteList is `gortisan route:list`: every route, read from the source.
+func runRouteList(stdout, stderr io.Writer) int {
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	project, err := generator.FindProject(cwd)
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	routes, err := generator.Routes(project)
+	if err != nil {
+		fmt.Fprintln(stderr, "gortisan:", err)
+		return 1
+	}
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "METHOD\tPATH\tHANDLER\tFILE")
+	for _, r := range routes {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.Method, r.Path, r.Handler, r.File)
+	}
+	_ = w.Flush()
+	fmt.Fprintf(stdout, "\n%d routes\n", len(routes))
+	return 0
 }

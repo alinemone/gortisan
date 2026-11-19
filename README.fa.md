@@ -194,6 +194,7 @@ gortisan.bat list               # cmd
 | `make:test <subject>` | `service_test.go`: تست سرویس با یک `Store` درون‌حافظه‌ای، بدون دیتابیس |
 | `make:test <version>/<subject>/<action>` | `<action>_test.go`: تست HTTP همان handler |
 | `add <postgres\|redis>` | بخشی را که پروژه بدون آن ساخته شده اضافه می‌کند: فایل‌ها، config، خط‌های `.env.example` و ماژول؛ دو خطی را که باید وصل کنید چاپ می‌کند |
+| `route:list` | همهٔ routeها: متد، مسیر، handler و فایل:خط؛ از `router.go` و `routes.go` هر نسخه خوانده می‌شود |
 | `make:seeder <name>` | `internal/seed/<name>.go`، و `cmd/seed` بار اول |
 | `migrate` | migrationهای اجرانشده را در یک batch اعمال می‌کند |
 | `migrate:rollback [batches]` | آخرین batch (یا چند batch) را برمی‌گرداند |
@@ -457,7 +458,7 @@ g.Use(middleware.Authenticate(s.Tokens))
 
 ## هنوز پشتیبانی نمی‌شود
 
-- `route:list`، مستندات OpenAPI / Swagger
+- مستندات OpenAPI / Swagger
 
 ## توسعه
 

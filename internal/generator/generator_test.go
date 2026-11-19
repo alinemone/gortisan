@@ -148,6 +148,11 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 				}
 			}
 
+			routes, err := Routes(project)
+			if err != nil || len(routes) < 2 || routes[0].Path != "/ping" {
+				t.Fatalf("route:list = %+v, %v", routes, err)
+			}
+
 			for _, args := range [][]string{{"mod", "tidy"}, {"vet", "./..."}, {"test", "./..."}} {
 				cmd := exec.Command("go", args...)
 				cmd.Dir = project.Root
