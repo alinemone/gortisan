@@ -80,7 +80,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		Debug: r.boolean("DEBUG", false),
 		HTTP: HTTP{
-			Port:              r.str("PORT", "8080"),
+			Port:              r.str("PORT", "8000"),
 			ReadHeaderTimeout: r.duration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
 			ReadTimeout:       r.duration("HTTP_READ_TIMEOUT", 30*time.Second),
 			WriteTimeout:      r.duration("HTTP_WRITE_TIMEOUT", 30*time.Second),

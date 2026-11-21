@@ -4,7 +4,7 @@
 // does not list it in go.mod; after generation every file is yours.
 //
 //	go install github.com/alinemone/gortisan/cmd/gortisan@latest
-//	gortisan create shop --module github.com/you/shop
+//	gortisan create shop github.com/you/shop
 //	gortisan make:handler order/get_order   (or: make handler ...)
 //
 // Inside a project, the generated ./gortisan script (gortisan.bat,
@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
@@ -132,8 +133,12 @@ func runCreate(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "gortisan:", err)
 		return 2
 	}
-	if len(f.positional) != 1 {
-		fmt.Fprintln(stderr, "usage: gortisan create <name> [--module <path>] [--with postgres,redis|all|none] [--no-tidy]")
+	name, module, err := createTarget(f.positional, f.values["module"])
+	if err != nil {
+		if err.Error() != "" {
+			fmt.Fprintln(stderr, "gortisan:", err)
+		}
+		fmt.Fprintln(stderr, "usage: gortisan create <name> [<module>] [--module <path>] [--with postgres,redis|all|none] [--no-tidy]")
 		return 2
 	}
 	cwd, err := os.Getwd()
@@ -141,8 +146,8 @@ func runCreate(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "gortisan:", err)
 		return 1
 	}
-	report, err := generator.Create(cwd, f.positional[0], generator.CreateOptions{
-		Module:  f.values["module"],
+	report, err := generator.Create(cwd, name, generator.CreateOptions{
+		Module:  module,
 		With:    f.values["with"],
 		NoTidy:  f.bools["no-tidy"],
 		Version: buildVersion(),
@@ -153,6 +158,35 @@ func runCreate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// createTarget reads the project name and module path of create from
+//
+//	create blog                              name blog, module blog
+//	create blog github.com/you/blog          name blog, module github.com/you/blog
+//	create github.com/you/blog               name blog, module github.com/you/blog
+//
+// --module may be given instead of the second argument, not with a different one.
+// An error with no text means only that the arguments do not fit.
+func createTarget(positional []string, flagModule string) (name, module string, err error) {
+	switch len(positional) {
+	case 1:
+		name = positional[0]
+		if strings.Contains(name, "/") {
+			module, name = name, path.Base(name)
+		}
+	case 2:
+		name, module = positional[0], positional[1]
+	default:
+		return "", "", errors.New("")
+	}
+	if flagModule != "" {
+		if module != "" && module != flagModule {
+			return "", "", fmt.Errorf("module given twice: %s and --module %s", module, flagModule)
+		}
+		module = flagModule
+	}
+	return name, module, nil
 }
 
 func runMake(args []string, stdout, stderr io.Writer) int {
@@ -347,7 +381,8 @@ func usage(w io.Writer) {
 	fmt.Fprint(w, `gortisan writes Go service code. The code it writes never imports gortisan.
 
 Usage:
-  gortisan create <name> [flags]        create a new project in ./<name>
+  gortisan create <name> [<module>]     create a new project in ./<name>
+  gortisan create <module>              e.g. github.com/you/blog: ./blog, that module
       --module <path>                   Go module path (default: <name>)
       --with <list>                     postgres, redis, all or none (default: both)
       --no-tidy                         skip "go mod tidy"
@@ -381,14 +416,14 @@ Usage:
     request <version>/<subject>/<name>  a type in request.go
     response <version>/<subject>/<name> a type in response.go
     validator [<group>/]<name>          internal/api/validator/<group>/<name>.go,
-                                        its message key added to lang/fa.json
+                                        its message key added to trans/lang/fa.json
     enum <subject>/<name> --members <list>   <name>.go in the domain, e.g. user/status
         --members "pending,paid=5,sent" integers count up from 1 or the previous value
         --type <type>                   string or an integer type (default: int64)
     cache <subject>/<name> [--type T]   a typed Redis cache in the domain's cache.go (redis)
     middleware <name>                   internal/api/middleware/<name>.go
     client <name>                       internal/platform/<name>/client.go, an HTTP client
-    migration <name>                    empty migrations/<time>_<name>.{up,down}.sql
+    migration <name>                    empty database/migrations/<time>_<name>.{up,down}.sql
     seeder <name>                       internal/seed/<name>.go, and cmd/seed
     test <subject>                      service_test.go with an in-memory Store
     test <version>/<subject>/<action>   <action>_test.go for that handler

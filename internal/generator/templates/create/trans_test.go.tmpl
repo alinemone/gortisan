@@ -47,7 +47,7 @@ func TestKeysExist(t *testing.T) {
 		}
 		for _, key := range usedKeys(parsed, fset) {
 			if !Has(key.name) {
-				t.Errorf("%s: %q is not in lang/%s", key.pos, key.name, file)
+				t.Errorf("%s: %q is not in %s", key.pos, key.name, file)
 			}
 		}
 		return nil

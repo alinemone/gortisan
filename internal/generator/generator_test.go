@@ -398,7 +398,7 @@ func TestMigrationsInTheSameSecondGetDistinctVersions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ups, _ := filepath.Glob(filepath.Join(root, "migrations", "*.up.sql"))
+	ups, _ := filepath.Glob(filepath.Join(root, "internal", "platform", "database", "migrations", "*.up.sql"))
 	seen := map[string]bool{}
 	for _, up := range ups {
 		version, _, _ := strings.Cut(filepath.Base(up), "_")
@@ -490,7 +490,7 @@ func TestMakeValidator(t *testing.T) {
 		}
 	}
 
-	src, err := os.ReadFile(filepath.Join(root, "lang", "fa.json"))
+	src, err := os.ReadFile(filepath.Join(root, "internal", "platform", "trans", "lang", "fa.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

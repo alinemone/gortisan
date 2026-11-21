@@ -78,7 +78,7 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 	outputs := []output{
 		{"go.mod", "create/go.mod.tmpl"},
 		{"cmd/api/main.go", "create/main.go.tmpl"},
-		{"internal/arch_test.go", "create/arch_test.go.tmpl"},
+		{"tests/arch_test.go", "create/arch_test.go.tmpl"},
 		{"internal/api/router.go", "create/api_router.go.tmpl"},
 		{"internal/api/v1/routes.go", "create/version_routes.go.tmpl"},
 		{"internal/platform/config/config.go", "create/config.go.tmpl"},
@@ -116,7 +116,7 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		report.next("go mod tidy failed, run it yourself in %s:\n%s", name, strings.TrimSpace(out))
 	}
 	report.next("cd %s && cp .env.example .env", name)
-	report.next("./gortisan run   # or go run ./cmd/api; serves on PORT (8080): /ping, /health")
+	report.next("./gortisan run   # or go run ./cmd/api; serves on PORT (8000): /ping, /health")
 	report.next("./gortisan make:model user, make:service user, make:handler v1/user/list   # gortisan.bat / gortisan.ps1 on Windows")
 	return report, nil
 }

@@ -43,15 +43,15 @@ gortisan version
 ## Quick start
 
 ```bash
-gortisan create shop --module github.com/you/shop
+gortisan create shop github.com/you/shop   # or: gortisan create github.com/you/shop
 cd shop
 cp .env.example .env          # point it at PostgreSQL and Redis
 ./gortisan run                # build, run, rebuild and restart on every change
 ```
 
 ```bash
-curl localhost:8080/ping      # {"ping":"pong"}
-curl localhost:8080/health    # {"status":"pass","checks":{"postgres":"up","redis":"up"}}
+curl localhost:8000/ping      # {"ping":"pong"}
+curl localhost:8000/health    # {"status":"pass","checks":{"postgres":"up","redis":"up"}}
 ```
 
 Add users with a list endpoint:
@@ -94,12 +94,12 @@ shop/
 │   │   └── v2/                   only what changed in v2
 │   ├── platform/                 INFRASTRUCTURE — no business rules
 │   │   ├── config/  server/  validate/  health/   server: http.Server with read/write/idle timeouts
-│   │   ├── problem/  trans/      RFC 9457 error bodies; trans.Message reads lang/fa.json
+│   │   ├── problem/  trans/      RFC 9457 error bodies; trans.Message reads trans/lang/fa.json
 │   │   ├── database/  database/orm/  database/migrate/     bun over pgx (postgres)
+│   │   ├── database/migrations/  plain SQL, *.up.sql / *.down.sql
+│   │   ├── trans/lang/fa.json    every text the API shows, by key ("general:entity-not-found")
 │   │   └── payment/              clients for other services                  (make:client)
-│   └── arch_test.go              fails `go test` when a layer imports the wrong way
-├── lang/fa.json                  every text the API shows, by key ("general:entity-not-found")
-├── migrations/                   plain SQL, *.up.sql / *.down.sql
+├── tests/arch_test.go            fails `go test` when a layer imports the wrong way
 ├── gortisan, gortisan.bat, gortisan.ps1
 └── go.mod                        echo, bun + pgx, go-redis — only what you picked
 ```
@@ -128,7 +128,7 @@ uses (`app/`, `business/`, `foundation/`) — keep that working as the project g
   api, worker  ──►  domain  ──►  platform
   ```
 
-  `internal/arch_test.go` fails when the domain imports `api`, when `platform`
+  `tests/arch_test.go` fails when the domain imports `api`, when `platform`
   imports the domain, or when `api/v2` imports `api/v1`.
 
 **Appended files.** Files that collect a kind of declaration — `handler.go`,
@@ -150,7 +150,7 @@ Nothing already in the file changes; a name that already exists is left alone.
 | `routes/api.php` | `internal/api/v1/routes.go` |
 | `app/Http/Middleware` | `internal/api/middleware/` |
 | `config/` | `internal/platform/config/` (and `.env`) |
-| `database/migrations` | `migrations/` |
+| `database/migrations` | `internal/platform/database/migrations/` |
 | `database/seeders` | `internal/seed/` |
 | `php artisan migrate` / `migrate:rollback` / `db:seed` | `./gortisan migrate` / `migrate:rollback` / `db:seed` |
 | `php artisan serve` | `./gortisan run` |
@@ -184,12 +184,12 @@ the same code, nobody needs gortisan installed, and `go.mod` stays untouched.
 | `make:handler <version>/<subject>/<action>` | a method in `internal/api/<version>/<resources>/handler.go`, its input in `request.go`, its output in `response.go`; a new version gets its `routes.go` |
 | `make:request <version>/<subject>/<name>` | a type with `Validate` in `request.go` |
 | `make:response <version>/<subject>/<name>` | a type in `response.go` |
-| `make:validator [<group>/]<name>` | `internal/api/validator/<group>/<name>.go`: a reusable check with `Passes` and `Validate`, and its message key in `lang/fa.json` |
+| `make:validator [<group>/]<name>` | `internal/api/validator/<group>/<name>.go`: a reusable check with `Passes` and `Validate`, and its message key in `internal/platform/trans/lang/fa.json` |
 | `make:enum <subject>/<name>` | `<name>.go` in the domain: constants, `String`, `Valid`, `Parse…`, the list of values |
 | `make:cache <subject>/<name>` | a typed Redis cache around a loader in the domain's `cache.go` *(redis)* |
 | `make:middleware <name>` | `internal/api/middleware/<name>.go` |
 | `make:client <name>` | `internal/platform/<name>/client.go`, a JSON HTTP client for another service |
-| `make:migration <name>` | empty `migrations/<time>_<name>.{up,down}.sql` |
+| `make:migration <name>` | empty `internal/platform/database/migrations/<time>_<name>.{up,down}.sql` |
 | `make:test <subject>` | `service_test.go`: a service test with an in-memory `Store`, no database |
 | `make:test <version>/<subject>/<action>` | `<action>_test.go`: an HTTP test of that handler |
 | `add <postgres\|redis>` | adds a piece the project was created without: its files, config, `.env.example` lines and module; prints the two lines to wire |
@@ -212,7 +212,7 @@ handler guesses the REST route from the action: `list` → `GET /users`, `get` �
 
 | Flag | Command | Meaning |
 |---|---|---|
-| `--module <path>` | `create` | Go module path (default: the project name) |
+| `--module <path>` | `create` | Go module path, the same as the second argument (default: the project name) |
 | `--with <list>` | `create` | `postgres`, `redis`, `all` (default) or `none` |
 | `--no-tidy` | `create` | skip `go mod tidy` |
 | `--no-watch` | `run` | run once |
@@ -411,7 +411,7 @@ err := orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error {
 ## Migrations and seeders
 
 ```bash
-./gortisan make:model user                 # also writes migrations/<time>_create_users_table.{up,down}.sql
+./gortisan make:model user                 # also writes internal/platform/database/migrations/<time>_create_users_table.{up,down}.sql
 ./gortisan make:migration add_index_to_users
 ./gortisan migrate                         # apply what is pending
 ./gortisan migrate:status
@@ -422,7 +422,7 @@ err := orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error {
 The runner is part of your project — `internal/platform/database/migrate`, a few
 hundred lines over `database/sql` (the bun DB's `db.DB`) — and `cmd/migrate` is a normal command you build and run
 in production before the new version serves traffic. The SQL files are embedded in
-the binary (`migrations/migrations.go`), so the image needs nothing else.
+the binary (`internal/platform/database/migrations/migrations.go`), so the image needs nothing else.
 
 - Applied migrations are recorded in `schema_migrations` with a **batch** number;
   `migrate:rollback` undoes whole batches, newest first, like Laravel.
@@ -503,7 +503,7 @@ Every error — validation, `echo.NewHTTPError`, a missing route, a 500 — is
 
 ### Translations
 
-Every text the API shows is in `lang/fa.json`, by key, with `%s` for arguments,
+Every text the API shows is in `internal/platform/trans/lang/fa.json`, by key, with `%s` for arguments,
 embedded in the binary:
 
 ```json
@@ -580,7 +580,7 @@ Error reporting (Sentry and the like) goes the same way: a middleware passed to
    libraries you picked. gortisan's tests check this on every build.
 2. **Dependencies are passed, not looked up.** Constructors take what they need and
    `main.go` wires them; nothing is stored in or resolved from `context.Context`.
-3. **Layers point one way:** `api`, `worker` → `domain` → `platform`. `internal/arch_test.go`
+3. **Layers point one way:** `api`, `worker` → `domain` → `platform`. `tests/arch_test.go`
    enforces it in every project.
 4. **Readable code over hidden machinery.** Config reads each variable by name.
    The database goes through bun, a well-known library, and the thin `orm`

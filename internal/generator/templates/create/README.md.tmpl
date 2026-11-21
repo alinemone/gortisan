@@ -9,8 +9,8 @@ imports gortisan, and gortisan is not in `go.mod`. Change anything.
 cp .env.example .env
 ./gortisan run               # builds cmd/api, runs it, restarts on every change
                              # (or: go run ./cmd/api)
-curl localhost:8080/ping     # {"ping":"pong"}
-curl localhost:8080/health   # {"status":"pass","checks":{...}}
+curl localhost:8000/ping     # {"ping":"pong"}
+curl localhost:8000/health   # {"status":"pass","checks":{...}}
 
 ```
 
@@ -33,25 +33,24 @@ internal/
     v1/users/           handler.go, request.go (inputs), response.go (outputs)
 
   platform/               infrastructure — no business rules
-    config/ server/ validate/ problem/ trans/ health/
+    config/ server/ validate/ problem/ health/
+    trans/lang/fa.json    every text the API shows, by key
 {{- if .Postgres}}
     database/             opens the database from the config
     database/orm/         bun over pgx: Repository[T], scopes, relations, transactions
     database/migrate/     the migration runner of cmd/migrate
+    database/migrations/  SQL migrations, *.up.sql / *.down.sql
 {{- end}}
 {{- if .Redis}}
     cache/
 {{- end}}
 
-
+tests/
   arch_test.go            fails `go test` when a layer imports the wrong way
-{{- if .Postgres}}
-migrations/               SQL migrations, *.up.sql / *.down.sql
-{{- end}}
 ```
 
 Dependencies point one way — `api` → `domain` → `platform` —
-and `internal/arch_test.go` enforces it, including that `api/v2` never imports
+and `tests/arch_test.go` enforces it, including that `api/v2` never imports
 `api/v1`.
 
 ## Rules
@@ -64,7 +63,7 @@ and `internal/arch_test.go` enforces it, including that `api/v2` never imports
   either stops the request (`address.NewMobile("body.mobile", m).Validate(ctx)`) or
   joins the others (`errs.Check(ctx, ...)`, `errs.Add(...)`, `return errs.Err()`).
 - **Errors are RFC 9457 problem details** (`application/problem+json`), and every
-  text is a key of `lang/fa.json`: `trans.Message("general:entity-not-found", "سفارش")`.
+  text is a key of `internal/platform/trans/lang/fa.json`: `trans.Message("general:entity-not-found", "سفارش")`.
 {{- if .Postgres}}
 - **Transactions are explicit.** `orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error { ... })`
   and `repo.WithTx(tx)`.

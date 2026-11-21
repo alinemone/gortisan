@@ -27,7 +27,7 @@ func componentOutputs(component string) []output {
 			{"internal/platform/database/orm/tx.go", "create/orm/tx.go.tmpl"},
 			{"internal/platform/database/orm/orm_test.go", "create/orm/orm_test.go.tmpl"},
 			{"internal/platform/database/orm/integration_test.go", "create/orm/integration_test.go.tmpl"},
-			{"migrations/migrations.go", "create/migrations_embed.go.tmpl"},
+			{migrationsDir + "/migrations.go", "create/migrations_embed.go.tmpl"},
 			{"internal/platform/database/migrate/migrate.go", "create/migrate.go.tmpl"},
 			{"internal/platform/database/migrate/migrate_test.go", "create/migrate_test.go.tmpl"},
 			{"cmd/migrate/main.go", "create/migrate_main.go.tmpl"},

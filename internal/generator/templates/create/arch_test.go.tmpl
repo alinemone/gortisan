@@ -1,4 +1,7 @@
-// Package internal holds the code of the service in four layers. This test
+// Package tests holds the tests that span packages. Unit tests stay next to
+// the code they test.
+//
+// The code of the service, in internal/, is in four layers. TestLayers
 // fails when one layer depends on another the wrong way:
 //
 //	api, worker  ->  domain  ->  platform
@@ -9,7 +12,7 @@
 //   - an API version never imports another version (v2 must not break v1).
 //
 // It runs with `go test ./...` and needs nothing but the standard library.
-package internal
+package tests
 
 import (
 	"bufio"
@@ -33,7 +36,8 @@ var forbidden = map[string][]string{
 
 func TestLayers(t *testing.T) {
 	module := modulePath(t)
-	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+	root := filepath.Join("..", "internal")
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return err
 		}
@@ -41,7 +45,11 @@ func TestLayers(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		from := filepath.ToSlash(path)
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		from := filepath.ToSlash(rel)
 		for _, imp := range file.Imports {
 			target, _ := strconv.Unquote(imp.Path.Value)
 			rest, ok := strings.CutPrefix(target, module+"/internal/")

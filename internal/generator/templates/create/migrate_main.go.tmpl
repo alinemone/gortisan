@@ -1,4 +1,4 @@
-// Command migrate applies the SQL migrations in migrations/ (embedded in the
+// Command migrate applies the SQL migrations in internal/platform/database/migrations/ (embedded in the
 // binary) to the database in .env / the environment:
 //
 //	go run ./cmd/migrate            apply pending migrations (also: up)
@@ -23,7 +23,7 @@ import (
 	"{{.Module}}/internal/platform/config"
 	"{{.Module}}/internal/platform/database"
 	"{{.Module}}/internal/platform/database/migrate"
-	"{{.Module}}/migrations"
+	"{{.Module}}/internal/platform/database/migrations"
 )
 
 const usage = "usage: migrate [up | rollback [batches] | status | fresh --force]"

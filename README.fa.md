@@ -46,15 +46,15 @@ gortisan version
 </div>
 
 ```bash
-gortisan create shop --module github.com/you/shop
+gortisan create shop github.com/you/shop   # or: gortisan create github.com/you/shop
 cd shop
 cp .env.example .env          # آدرس PostgreSQL و Redis را بدهید
 ./gortisan run                # build، اجرا، و ری‌استارت با هر تغییر
 ```
 
 ```bash
-curl localhost:8080/ping      # {"ping":"pong"}
-curl localhost:8080/health    # {"status":"pass","checks":{"postgres":"up","redis":"up"}}
+curl localhost:8000/ping      # {"ping":"pong"}
+curl localhost:8000/health    # {"status":"pass","checks":{"postgres":"up","redis":"up"}}
 ```
 
 <div dir="rtl">
@@ -107,14 +107,14 @@ shop/
 │   │   └── v2/                   فقط چیزهایی که در v2 عوض شده
 │   ├── platform/                 زیرساخت — بدون قانون کسب‌وکار
 │   │   ├── config/  server/  validate/  health/
-│   │   ├── problem/  trans/      بدنهٔ خطای RFC 9457؛ trans.Message از lang/fa.json می‌خواند
+│   │   ├── problem/  trans/      بدنهٔ خطای RFC 9457؛ trans.Message از trans/lang/fa.json می‌خواند
 │   │   ├── database/  database/orm/  database/migrate/
+│   │   ├── database/migrations/  SQL خام، ‎*.up.sql و ‎*.down.sql (داخل باینری embed می‌شوند)
+│   │   ├── trans/lang/fa.json    همهٔ متن‌هایی که API نشان می‌دهد، با کلید
 │   │   ├── cache/
 │   │   └── payment/              کلاینت سرویس‌های دیگر           (make:client)
 │   └── seed/                     seederها                        (make:seeder)
-│   └── arch_test.go              اگر لایه‌ای جهت اشتباه import کند، go test خطا می‌دهد
-├── lang/fa.json                  همهٔ متن‌هایی که API نشان می‌دهد، با کلید
-├── migrations/                   SQL خام، ‎*.up.sql و ‎*.down.sql (داخل باینری embed می‌شوند)
+├── tests/arch_test.go            اگر لایه‌ای جهت اشتباه import کند، go test خطا می‌دهد
 ├── gortisan, gortisan.bat, gortisan.ps1
 └── go.mod                        فقط echo، bun + pgx، go-redis — همان‌هایی که انتخاب کردید
 ```
@@ -137,7 +137,7 @@ api, worker  ──►  domain  ──►  platform
 
 <div dir="rtl">
 
-`internal/arch_test.go` خطا می‌دهد اگر domain پکیج `api` را import کند، اگر `platform` به domain وابسته شود، یا اگر `api/v2` پکیج `api/v1` را import کند.
+`tests/arch_test.go` خطا می‌دهد اگر domain پکیج `api` را import کند، اگر `platform` به domain وابسته شود، یا اگر `api/v2` پکیج `api/v1` را import کند.
 
 **فایل‌هایی که به آن‌ها اضافه می‌شود.** فایل‌هایی که یک نوع تعریف را جمع می‌کنند — `handler.go`، `request.go`، `response.go`، `cache.go` — با اولین دستوری که لازمشان دارد ساخته می‌شوند و دستورهای بعدی به آن‌ها اضافه می‌کنند: `make:handler v1/user/get` یک متد به `handler.go`، نوع `GetRequest` به `request.go` و `GetResponse` به `response.go` اضافه می‌کند، همراه importهای لازم. هیچ چیزی از محتوای قبلی فایل عوض نمی‌شود؛ اگر اسمی از قبل وجود داشته باشد دست‌نخورده می‌ماند و گزارش می‌شود.
 
@@ -153,7 +153,7 @@ api, worker  ──►  domain  ──►  platform
 | `routes/api.php` | `internal/api/v1/routes.go` |
 | `app/Http/Middleware` | `internal/api/middleware/` |
 | `config/` | `internal/platform/config/` (و `.env`) |
-| `database/migrations` | `migrations/` |
+| `database/migrations` | `internal/platform/database/migrations/` |
 | `database/seeders` | `internal/seed/` |
 | `php artisan serve` | `./gortisan run` |
 | `php artisan make:model User -m` | `./gortisan make:model user` |
@@ -187,12 +187,12 @@ gortisan.bat list               # cmd
 | `make:handler <version>/<subject>/<action>` | یک متد در `internal/api/<version>/<resources>/handler.go`، ورودی‌اش در `request.go` و خروجی‌اش در `response.go`؛ نسخهٔ جدید `routes.go` خودش را می‌گیرد |
 | `make:request <version>/<subject>/<name>` | یک نوع با `Validate` در `request.go` |
 | `make:response <version>/<subject>/<name>` | یک نوع در `response.go` |
-| `make:validator [<group>/]<name>` | `internal/api/validator/<group>/<name>.go`: یک ولیدیتور قابل استفادهٔ مجدد با `Passes` و `Validate`، و کلید پیامش در `lang/fa.json` |
+| `make:validator [<group>/]<name>` | `internal/api/validator/<group>/<name>.go`: یک ولیدیتور قابل استفادهٔ مجدد با `Passes` و `Validate`، و کلید پیامش در `internal/platform/trans/lang/fa.json` |
 | `make:enum <subject>/<name>` | فایل `<name>.go` در domain: ثابت‌ها، `String`، `Valid`، `Parse…` و فهرست مقادیر |
 | `make:cache <subject>/<name>` | یک cache تایپ‌شدهٔ Redis دور یک loader در `cache.go` همان domain *(redis)* |
 | `make:middleware <name>` | `internal/api/middleware/<name>.go` |
 | `make:client <name>` | `internal/platform/<name>/client.go`، کلاینت JSON برای یک سرویس دیگر |
-| `make:migration <name>` | فایل‌های خالی `migrations/<time>_<name>.{up,down}.sql` |
+| `make:migration <name>` | فایل‌های خالی `internal/platform/database/migrations/<time>_<name>.{up,down}.sql` |
 | `make:test <subject>` | `service_test.go`: تست سرویس با یک `Store` درون‌حافظه‌ای، بدون دیتابیس |
 | `make:test <version>/<subject>/<action>` | `<action>_test.go`: تست HTTP همان handler |
 | `add <postgres\|redis>` | بخشی را که پروژه بدون آن ساخته شده اضافه می‌کند: فایل‌ها، config، خط‌های `.env.example` و ماژول؛ دو خطی را که باید وصل کنید چاپ می‌کند |
@@ -211,7 +211,7 @@ gortisan.bat list               # cmd
 
 | فلگ | دستور | معنی |
 |---|---|---|
-| `--module <path>` | `create` | مسیر ماژول Go (پیش‌فرض: اسم پروژه) |
+| `--module <path>` | `create` | مسیر ماژول Go، همان آرگومان دوم (پیش‌فرض: اسم پروژه) |
 | `--with <list>` | `create` | `postgres`، `redis`، `all` (پیش‌فرض) یا `none` |
 | `--no-tidy` | `create` | `go mod tidy` را اجرا نکن |
 | `--no-watch` | `run` | فقط یک بار اجرا کن |
@@ -411,7 +411,7 @@ err := orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error {
 </div>
 
 ```bash
-./gortisan make:model user                 # migrations/<time>_create_users_table.{up,down}.sql را هم می‌سازد
+./gortisan make:model user                 # internal/platform/database/migrations/<time>_create_users_table.{up,down}.sql را هم می‌سازد
 ./gortisan make:migration add_index_to_users
 ./gortisan migrate                         # اعمال migrationهای اجرانشده
 ./gortisan migrate:status
@@ -421,7 +421,7 @@ err := orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error {
 
 <div dir="rtl">
 
-اجراکنندهٔ migration بخشی از پروژهٔ خودتان است — `internal/platform/database/migrate`، چند صد خط روی `database/sql` (همان `db.DB` در bun) — و `cmd/migrate` یک دستور معمولی است که در production قبل از اینکه نسخهٔ جدید ترافیک بگیرد build و اجرایش می‌کنید. فایل‌های SQL داخل باینری embed می‌شوند (`migrations/migrations.go`)، پس image به چیز دیگری نیاز ندارد.
+اجراکنندهٔ migration بخشی از پروژهٔ خودتان است — `internal/platform/database/migrate`، چند صد خط روی `database/sql` (همان `db.DB` در bun) — و `cmd/migrate` یک دستور معمولی است که در production قبل از اینکه نسخهٔ جدید ترافیک بگیرد build و اجرایش می‌کنید. فایل‌های SQL داخل باینری embed می‌شوند (`internal/platform/database/migrations/migrations.go`)، پس image به چیز دیگری نیاز ندارد.
 
 - migrationهای اعمال‌شده با یک شمارهٔ **batch** در `schema_migrations` ثبت می‌شوند؛ `migrate:rollback` مثل لاراول batchها را کامل، از جدیدترین، برمی‌گرداند.
 - هر migration همراه ثبتش **در یک تراکنش** اجرا می‌شود. فایلی که خط `-- migrate:no-transaction` دارد بیرون از تراکنش اجرا می‌شود؛ برای `CREATE INDEX CONCURRENTLY`.
@@ -502,7 +502,7 @@ location یکی از این‌هاست: `body.<field>` (یا فقط `<field>`)،
 
 ### ترجمه
 
-همهٔ متن‌هایی که API نشان می‌دهد در `lang/fa.json` هستند، با کلید و با `%s` برای آرگومان‌ها، و داخل باینری embed می‌شوند:
+همهٔ متن‌هایی که API نشان می‌دهد در `internal/platform/trans/lang/fa.json` هستند، با کلید و با `%s` برای آرگومان‌ها، و داخل باینری embed می‌شوند:
 
 </div>
 
@@ -578,7 +578,7 @@ g.Use(middleware.Authenticate(s.Tokens))
 
 1. **هیچ importی از تولیدکننده نیست.** فقط پکیج‌های خود پروژه و کتابخانه‌هایی که انتخاب کرده‌اید. تست‌های gortisan این را در هر build بررسی می‌کنند.
 2. **وابستگی‌ها پاس داده می‌شوند، جست‌وجو نمی‌شوند.** constructorها چیزی را که لازم دارند می‌گیرند و `main.go` آن‌ها را به هم وصل می‌کند؛ هیچ چیز در `context.Context` ذخیره یا از آن خوانده نمی‌شود.
-3. **لایه‌ها یک‌طرفه‌اند:** `api` و `worker` ← `domain` ← `platform`. `internal/arch_test.go` این را در هر پروژه اجبار می‌کند.
+3. **لایه‌ها یک‌طرفه‌اند:** `api` و `worker` ← `domain` ← `platform`. `tests/arch_test.go` این را در هر پروژه اجبار می‌کند.
 4. **کد خوانا به‌جای سازوکار پنهان.** config هر متغیر را با اسمش می‌خواند. دیتابیس از bun، یک کتابخانهٔ شناخته‌شده، استفاده می‌کند و پکیج نازک `orm` روی آن داخل مخزن خودتان است تا بخوانید و تغییرش دهید.
 5. **تراکنش‌ها مقدارند** — `tx` در `orm.InTx` که به `repo.WithTx(tx)` داده می‌شود — و **خطاها معنی دارند**: domain اسمشان را می‌گذارد و API آن‌ها را به status تبدیل می‌کند.
 

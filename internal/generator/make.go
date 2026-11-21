@@ -81,7 +81,9 @@ const (
 	ormPath      = "internal/platform/database/orm/orm.go"
 	redisPath    = "internal/platform/cache/redis.go"
 	validatePath = "internal/platform/validate/validate.go"
-	langPath     = "lang/fa.json"
+	langPath     = "internal/platform/trans/lang/fa.json"
+	// migrationsDir holds the SQL migrations and the file that embeds them.
+	migrationsDir = "internal/platform/database/migrations"
 )
 
 // validateOutputs are validation, problem details and translation: every
@@ -90,7 +92,6 @@ var validateOutputs = []output{
 	{"internal/platform/problem/problem.go", "create/problem.go.tmpl"},
 	{"internal/platform/trans/trans.go", "create/trans.go.tmpl"},
 	{"internal/platform/trans/trans_test.go", "create/trans_test.go.tmpl"},
-	{"lang/lang.go", "create/lang.go.tmpl"},
 	{langPath, "create/lang_fa.json.tmpl"},
 	{validatePath, "create/validate.go.tmpl"},
 	{"internal/platform/validate/validate_test.go", "create/validate_test.go.tmpl"},
@@ -340,12 +341,12 @@ func makeModel(p *Project, name string, opts MakeOptions, report *Report) error 
 		{dir + "/errors.go", "make/errors.go.tmpl"},
 		{dir + "/store.go", "make/store.go.tmpl"},
 		{dir + "/repository.go", "make/repository.go.tmpl"},
-		{"migrations/" + stamp + "_create_" + d.Table + "_table.up.sql", "make/create_table.up.sql.tmpl"},
-		{"migrations/" + stamp + "_create_" + d.Table + "_table.down.sql", "make/create_table.down.sql.tmpl"},
+		{migrationsDir + "/" + stamp + "_create_" + d.Table + "_table.up.sql", "make/create_table.up.sql.tmpl"},
+		{migrationsDir + "/" + stamp + "_create_" + d.Table + "_table.down.sql", "make/create_table.down.sql.tmpl"},
 	}, d, opts.Force, report); err != nil {
 		return err
 	}
-	report.next("create the table: ./gortisan migrate   (migrations/%s_create_%s_table.up.sql)", stamp, d.Table)
+	report.next("create the table: ./gortisan migrate   (%s/%s_create_%s_table.up.sql)", migrationsDir, stamp, d.Table)
 	report.next("then: ./gortisan make:service %s", f.Path)
 	return nil
 }
@@ -502,7 +503,7 @@ func makeResponse(p *Project, name string, report *Report) error {
 
 // makeValidator writes internal/api/validator/<group>/<name>.go, or
 // internal/api/validator/<name>.go without a group, and adds its message key
-// to lang/fa.json.
+// to internal/platform/trans/lang/fa.json.
 func makeValidator(p *Project, name string, report *Report) error {
 	dir, pkg, prefix := "internal/api/validator", "validator", "validation"
 	var item string
@@ -527,7 +528,7 @@ func makeValidator(p *Project, name string, report *Report) error {
 	if !bytes.Contains(src, []byte("type Base struct")) {
 		return fmt.Errorf("%s comes from an older gortisan and has no validate.Base; "+
 			"replace internal/platform/validate with the one of a new project (gortisan create), "+
-			"with internal/platform/problem, internal/platform/trans and lang/", validatePath)
+			"with internal/platform/problem and internal/platform/trans", validatePath)
 	}
 	if err := p.require(langPath, "make:validator adds the validator's message there"); err != nil {
 		return err
@@ -547,7 +548,7 @@ func makeValidator(p *Project, name string, report *Report) error {
 	return nil
 }
 
-// addPhrase adds key to lang/fa.json, after the last entry, unless it is
+// addPhrase adds key to internal/platform/trans/lang/fa.json, after the last entry, unless it is
 // there already. The rest of the file is kept as it is.
 func addPhrase(p *Project, key, text string, report *Report) error {
 	path := filepath.Join(p.Root, filepath.FromSlash(langPath))
@@ -735,8 +736,8 @@ func makeMigration(p *Project, name string, opts MakeOptions, report *Report) er
 	}
 	stamp := freshStamp(p, opts.Now)
 	return renderAll(p.Root, []output{
-		{"migrations/" + stamp + "_" + n + ".up.sql", "make/migration.up.sql.tmpl"},
-		{"migrations/" + stamp + "_" + n + ".down.sql", "make/migration.down.sql.tmpl"},
+		{migrationsDir + "/" + stamp + "_" + n + ".up.sql", "make/migration.up.sql.tmpl"},
+		{migrationsDir + "/" + stamp + "_" + n + ".down.sql", "make/migration.down.sql.tmpl"},
 	}, data{Name: n}, opts.Force, report)
 }
 
@@ -777,7 +778,7 @@ func freshStamp(p *Project, now time.Time) string {
 	}
 	for {
 		stamp := migrationStamp(now)
-		if matches, _ := filepath.Glob(filepath.Join(p.Root, "migrations", stamp+"_*")); len(matches) == 0 {
+		if matches, _ := filepath.Glob(filepath.Join(p.Root, filepath.FromSlash(migrationsDir), stamp+"_*")); len(matches) == 0 {
 			return stamp
 		}
 		now = now.Add(time.Second)

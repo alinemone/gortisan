@@ -1,29 +1,38 @@
-// Package trans returns the texts of lang/fa.json:
+// Package trans returns the texts the service shows to people, from
+// lang/fa.json next to this file (embedded in the binary):
 //
 //	trans.Message("general:entity-not-found", "سفارش") // "سفارش مورد نظر یافت نشد."
+//
+// fa.json maps a key to its text, with %s where Message puts its arguments.
+// Keys are grouped by a prefix, "<group>:<name>"; the test of this package
+// fails when the code uses a key that is not in fa.json.
 package trans
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
-
-	"{{.Module}}/lang"
 )
 
-// file is the language file T reads.
-const file = "fa.json"
+// file is the language file Message reads.
+const file = "lang/fa.json"
+
+// langFiles are the language files.
+//
+//go:embed lang/*.json
+var langFiles embed.FS
 
 // phrases is read once, when the program starts, and never changed.
 var phrases = load()
 
 func load() map[string]string {
-	data, err := lang.Files.ReadFile(file)
+	data, err := langFiles.ReadFile(file)
 	if err != nil {
-		panic(fmt.Sprintf("trans: lang/%s: %v", file, err))
+		panic(fmt.Sprintf("trans: %s: %v", file, err))
 	}
 	var m map[string]string
 	if err := json.Unmarshal(data, &m); err != nil {
-		panic(fmt.Sprintf("trans: lang/%s: %v", file, err))
+		panic(fmt.Sprintf("trans: %s: %v", file, err))
 	}
 	return m
 }

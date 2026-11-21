@@ -37,7 +37,7 @@ type Base struct {
 	// "body.items.0.quantity", "query.page", "path.id" or "header.X-Shop".
 	// A location without one of these prefixes is a body field.
 	Location string
-	// Code is the key of the message in lang/fa.json, e.g.
+	// Code is the key of the message in trans/lang/fa.json, e.g.
 	// "address:invalid-mobile". Clients receive it to match on.
 	Code string
 	// Status is the status Validate fails with; 0 means 422.
@@ -78,7 +78,7 @@ type Errors struct {
 }
 
 // Add records that the value at location is invalid, with the text of code
-// in lang/fa.json and args put in its %s.
+// in trans/lang/fa.json and args put in its %s.
 func (e *Errors) Add(location, code string, args ...any) {
 	e.fields = append(e.fields, field(location, code, trans.Message(code, args...)))
 }
