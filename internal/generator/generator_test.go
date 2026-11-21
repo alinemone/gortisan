@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestNaming(t *testing.T) {
@@ -45,9 +44,9 @@ func TestParseFields(t *testing.T) {
 	}
 	got := []string{}
 	for _, f := range fields {
-		got = append(got, f.GoName+" "+f.GoType+" "+f.SQLType+" "+f.Tag)
+		got = append(got, f.GoName+" "+f.GoType+" "+f.Tag)
 	}
-	want := "UserID int64 BIGINT user_id|PaidAt *time.Time TIMESTAMPTZ paid_at|Meta json.RawMessage JSONB meta,type:jsonb,nullzero"
+	want := "UserID int64 user_id|PaidAt *time.Time paid_at|Meta json.RawMessage meta,type:jsonb,nullzero"
 	if strings.Join(got, "|") != want {
 		t.Errorf("got %s\nwant %s", strings.Join(got, "|"), want)
 	}
@@ -92,7 +91,6 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 				return slices.Contains(strings.Split(with, ","), component)
 			}
 
-			now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 			type step struct {
 				kind, name string
 				opts       MakeOptions
@@ -127,7 +125,6 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 					step{kind: "model", name: "sales/payment"}, // a grouped subject
 					step{kind: "service", name: "sales/payment"},
 					step{kind: "handler", name: "v1/sales/payment/get"},
-					step{kind: "migration", name: "add_index"},
 				)
 			}
 			if has("redis") {
@@ -137,7 +134,6 @@ func TestGeneratedProjectsBuild(t *testing.T) {
 				}
 			}
 			for _, s := range steps {
-				s.opts.Now = now
 				if _, err := Make(project, s.kind, s.name, s.opts); err != nil {
 					t.Fatalf("make %s %s: %v", s.kind, s.name, err)
 				}
@@ -386,32 +382,6 @@ func TestCreateRefusesNonEmptyDir(t *testing.T) {
 	}
 }
 
-func TestMigrationsInTheSameSecondGetDistinctVersions(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/x\n\ngo 1.26\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	p, _ := FindProject(root)
-	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	for _, name := range []string{"first", "second", "third"} {
-		if _, err := Make(p, "migration", name, MakeOptions{Now: now}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	ups, _ := filepath.Glob(filepath.Join(root, "internal", "platform", "database", "migrations", "*.up.sql"))
-	seen := map[string]bool{}
-	for _, up := range ups {
-		version, _, _ := strings.Cut(filepath.Base(up), "_")
-		if seen[version] {
-			t.Fatalf("version %s used twice: %v", version, ups)
-		}
-		seen[version] = true
-	}
-	if len(seen) != 3 {
-		t.Fatalf("want 3 versions, got %v", ups)
-	}
-}
-
 // TestAddComponent adds redis and postgres to a project created with none.
 // It runs go get and go mod tidy, so -short skips it.
 func TestAddComponent(t *testing.T) {
@@ -438,7 +408,7 @@ func TestAddComponent(t *testing.T) {
 			t.Errorf("adding %s twice: want an error", component)
 		}
 	}
-	for _, rel := range []string{"internal/platform/cache/redis.go", "internal/platform/config/redis.go", "internal/platform/database/orm/orm.go", "internal/platform/config/postgres.go", "cmd/migrate/main.go"} {
+	for _, rel := range []string{"internal/platform/cache/redis.go", "internal/platform/config/redis.go", "internal/platform/database/orm/orm.go", "internal/platform/config/postgres.go"} {
 		if !p.exists(rel) {
 			t.Errorf("%s was not written", rel)
 		}

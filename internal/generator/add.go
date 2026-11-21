@@ -27,10 +27,6 @@ func componentOutputs(component string) []output {
 			{"internal/platform/database/orm/tx.go", "create/orm/tx.go.tmpl"},
 			{"internal/platform/database/orm/orm_test.go", "create/orm/orm_test.go.tmpl"},
 			{"internal/platform/database/orm/integration_test.go", "create/orm/integration_test.go.tmpl"},
-			{migrationsDir + "/migrations.go", "create/migrations_embed.go.tmpl"},
-			{"internal/platform/database/migrate/migrate.go", "create/migrate.go.tmpl"},
-			{"internal/platform/database/migrate/migrate_test.go", "create/migrate_test.go.tmpl"},
-			{"cmd/migrate/main.go", "create/migrate_main.go.tmpl"},
 		}
 	case "redis":
 		return []output{{"internal/platform/cache/redis.go", "create/redis.go.tmpl"}}
@@ -105,7 +101,7 @@ func Add(p *Project, component string) (*Report, error) {
 	case "postgres":
 		report.next("internal/platform/config/config.go: add `Postgres Postgres` to Config and `Postgres: r.postgres(),` to Load")
 		report.next("cmd/api/main.go: db, err := database.Open(ctx, cfg.Postgres); if err != nil { return err }; defer db.Close()")
-		report.next("then: ./gortisan make:model <name> and ./gortisan migrate")
+		report.next("then: ./gortisan make:model <name>")
 	case "redis":
 		report.next("internal/platform/config/config.go: add `Redis Redis` to Config and `Redis: r.redis(),` to Load")
 		report.next("cmd/api/main.go: rdb, err := cache.Open(ctx, cfg.Redis); if err != nil { return err }; defer rdb.Close()")

@@ -25,7 +25,7 @@ time that you cannot read in your own repository.
 - [API versions](#api-versions)
 - [The database layer](#the-database-layer)
 - [Validation and errors](#validation-and-errors)
-- [Migrations and seeders](#migrations-and-seeders)
+- [Tables and migrations](#tables-and-migrations)
 - [Adding auth, Sentry…](#adding-auth-sentry)
 - [No magic: the rules](#no-magic-the-rules)
 - [Not supported yet](#not-supported-yet)
@@ -95,8 +95,7 @@ shop/
 │   ├── platform/                 INFRASTRUCTURE — no business rules
 │   │   ├── config/  server/  validate/  health/   server: http.Server with read/write/idle timeouts
 │   │   ├── problem/  trans/      RFC 9457 error bodies; trans.Message reads trans/lang/fa.json
-│   │   ├── database/  database/orm/  database/migrate/     bun over pgx (postgres)
-│   │   ├── database/migrations/  plain SQL, *.up.sql / *.down.sql
+│   │   ├── database/  database/orm/   bun over pgx (postgres)
 │   │   ├── trans/lang/fa.json    every text the API shows, by key ("general:entity-not-found")
 │   │   └── payment/              clients for other services                  (make:client)
 ├── tests/arch_test.go            fails `go test` when a layer imports the wrong way
@@ -150,9 +149,7 @@ Nothing already in the file changes; a name that already exists is left alone.
 | `routes/api.php` | `internal/api/v1/routes.go` |
 | `app/Http/Middleware` | `internal/api/middleware/` |
 | `config/` | `internal/platform/config/` (and `.env`) |
-| `database/migrations` | `internal/platform/database/migrations/` |
-| `database/seeders` | `internal/seed/` |
-| `php artisan migrate` / `migrate:rollback` / `db:seed` | `./gortisan migrate` / `migrate:rollback` / `db:seed` |
+| `database/migrations`, `php artisan migrate` | none — see [Tables and migrations](#tables-and-migrations) |
 | `php artisan serve` | `./gortisan run` |
 | `php artisan make:model User -m` | `./gortisan make:model user` |
 | `php artisan make:controller` | `./gortisan make:handler v1/user/list` |
@@ -179,7 +176,7 @@ the same code, nobody needs gortisan installed, and `go.mod` stays untouched.
 |---|---|
 | `create <name>` | a new project in `./<name>` |
 | `run [command] [-- args]` | builds and runs `cmd/api` (or `cmd/<command>`), restarting on every change to a `.go` file, `go.mod` or `.env`; `--no-watch` runs once |
-| `make:model <subject>` | `user.go`, `errors.go`, `store.go`, `repository.go` in `internal/domain/<subject>`, and a create-table migration *(postgres)* |
+| `make:model <subject>` | `user.go`, `errors.go`, `store.go`, `repository.go` in `internal/domain/<subject>` *(postgres)* |
 | `make:service <subject>` | `service.go`, built on the `Store` when there is one |
 | `make:handler <version>/<subject>/<action>` | a method in `internal/api/<version>/<resources>/handler.go`, its input in `request.go`, its output in `response.go`; a new version gets its `routes.go` |
 | `make:request <version>/<subject>/<name>` | a type with `Validate` in `request.go` |
@@ -189,17 +186,10 @@ the same code, nobody needs gortisan installed, and `go.mod` stays untouched.
 | `make:cache <subject>/<name>` | a typed Redis cache around a loader in the domain's `cache.go` *(redis)* |
 | `make:middleware <name>` | `internal/api/middleware/<name>.go` |
 | `make:client <name>` | `internal/platform/<name>/client.go`, a JSON HTTP client for another service |
-| `make:migration <name>` | empty `internal/platform/database/migrations/<time>_<name>.{up,down}.sql` |
 | `make:test <subject>` | `service_test.go`: a service test with an in-memory `Store`, no database |
 | `make:test <version>/<subject>/<action>` | `<action>_test.go`: an HTTP test of that handler |
 | `add <postgres\|redis>` | adds a piece the project was created without: its files, config, `.env.example` lines and module; prints the two lines to wire |
 | `route:list` | every route: method, path, handler and file:line, read from `router.go` and each version's `routes.go` |
-| `make:seeder <name>` | `internal/seed/<name>.go`, and `cmd/seed` the first time |
-| `migrate` | applies pending migrations as one batch (`go run ./cmd/migrate`) |
-| `migrate:rollback [batches]` | undoes the last batch, or several |
-| `migrate:status` | lists every migration and whether it ran |
-| `migrate:fresh --force` | drops every table and migrates again — development only |
-| `db:seed [name]` | runs the seeders in one transaction (`go run ./cmd/seed`) |
 | `list`, `help`, `version` | |
 
 A subject may be grouped — `make:model sales/order`, `make:handler v1/sales/order/list`.
@@ -298,8 +288,9 @@ type User struct {
 | `rel:has-many,join:id=user_id` (also `has-one`, `belongs-to`, `m2m`) | a relation, loaded on request |
 
 `make:model user --fields "mobile:string,name:string" --soft-delete` writes the
-struct, the repository and the create-table migration. To add a column, add a
-field and a migration.
+struct and the repository. The table itself is yours to create (see
+[Tables and migrations](#tables-and-migrations)); to add a column, add a field
+and the column.
 
 `internal/platform/database/orm` is a small layer over bun that lives in your
 project. It imports only bun, pgx and the standard library — never your config
@@ -408,33 +399,16 @@ err := orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error {
 })
 ```
 
-## Migrations and seeders
+## Tables and migrations
 
-```bash
-./gortisan make:model user                 # also writes internal/platform/database/migrations/<time>_create_users_table.{up,down}.sql
-./gortisan make:migration add_index_to_users
-./gortisan migrate                         # apply what is pending
-./gortisan migrate:status
-./gortisan migrate:rollback                # undo the last batch
-./gortisan make:seeder users && ./gortisan db:seed
-```
-
-The runner is part of your project — `internal/platform/database/migrate`, a few
-hundred lines over `database/sql` (the bun DB's `db.DB`) — and `cmd/migrate` is a normal command you build and run
-in production before the new version serves traffic. The SQL files are embedded in
-the binary (`internal/platform/database/migrations/migrations.go`), so the image needs nothing else.
-
-- Applied migrations are recorded in `schema_migrations` with a **batch** number;
-  `migrate:rollback` undoes whole batches, newest first, like Laravel.
-- Each migration runs **in a transaction** with its bookkeeping. A file containing
-  `-- migrate:no-transaction` runs outside one, for `CREATE INDEX CONCURRENTLY`.
-- A **Postgres advisory lock** lets one process migrate at a time, so replicas that
-  start together never apply a migration twice.
-- Two `make:migration`s in the same second get distinct versions.
-
-Seeders are functions in `internal/seed` that take an `orm.IDB` and use the
-domain repositories; `cmd/seed` lists them in order and runs them in one
-transaction (`./gortisan db:seed users` runs one).
+gortisan does not create tables and generates no migration runner or seeders.
+`make:model` writes the Go side — the struct with its bun tags and the
+repository — and the schema is yours: create the tables by hand, or with the
+migration tool you prefer ([goose](https://github.com/pressly/goose),
+[golang-migrate](https://github.com/golang-migrate/migrate),
+[Atlas](https://atlasgo.io), …). A tool that needs its own command can live in
+`cmd/migrate`; `./gortisan run` does not start `cmd/migrate`, `cmd/seed` or
+`cmd/worker` unless asked.
 
 ## Validation and errors
 

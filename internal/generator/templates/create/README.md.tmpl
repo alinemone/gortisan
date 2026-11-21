@@ -38,8 +38,6 @@ internal/
 {{- if .Postgres}}
     database/             opens the database from the config
     database/orm/         bun over pgx: Repository[T], scopes, relations, transactions
-    database/migrate/     the migration runner of cmd/migrate
-    database/migrations/  SQL migrations, *.up.sql / *.down.sql
 {{- end}}
 {{- if .Redis}}
     cache/
@@ -97,7 +95,8 @@ return invoice, orm.MapNotFound(err, ErrNotFound)
 Anything else is plain bun: `r.rows.Select(&dest)` or `r.rows.DB().NewSelect()`.
 `internal/platform/database/orm` imports only bun, pgx and the standard
 library, so it can become a module of its own. To add a column, add a field
-and a migration.
+and the column. The project creates no tables: make them yourself, or with the
+migration tool you choose (goose, golang-migrate, Atlas, ...).
 {{- end}}
 
 ## Generate more
@@ -109,7 +108,7 @@ no code imports it and `go.mod` does not list it.
 ```bash
 ./gortisan list                                   # every command and flag
 {{- if .Postgres}}
-./gortisan make:model user                        # internal/domain/user + a migration
+./gortisan make:model user                        # internal/domain/user
 ./gortisan make:model sales/order                 # a grouped subject
 {{- end}}
 ./gortisan make:service user                      # internal/domain/user/service.go
@@ -119,9 +118,6 @@ no code imports it and `go.mod` does not list it.
 ./gortisan make:validator address/mobile
 ./gortisan make:middleware request_id
 ./gortisan make:client payment
-{{- if .Postgres}}
-./gortisan make:migration add_index_to_users
-{{- end}}
 {{- if .Redis}}
 ./gortisan make:cache user/profile --type "*User"
 {{- end}}

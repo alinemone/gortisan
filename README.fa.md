@@ -20,7 +20,7 @@
 - [دستورها](#دستورها)
 - [نسخه‌های API](#نسخههای-api)
 - [لایهٔ دیتابیس](#لایهٔ-دیتابیس)
-- [migration و seeder](#migration-و-seeder)
+- [جدول‌ها و migration](#جدول‌ها-و-migration)
 - [اعتبارسنجی و خطاها](#اعتبارسنجی-و-خطاها)
 - [اضافه کردن auth، Sentry و…](#اضافه-کردن-authsentry-و)
 - [بدون مجیک: قانون‌ها](#بدون-مجیک-قانونها)
@@ -65,7 +65,6 @@ curl localhost:8000/health    # {"status":"pass","checks":{"postgres":"up","redi
 
 ```bash
 ./gortisan make:model user --fields "mobile:string,name:string" --soft-delete
-./gortisan migrate
 ./gortisan make:service user
 ./gortisan make:handler v1/user/list
 ```
@@ -81,9 +80,7 @@ curl localhost:8000/health    # {"status":"pass","checks":{"postgres":"up","redi
 ```
 shop/
 ├── cmd/
-│   ├── api/main.go               سرویس HTTP: همهٔ وابستگی‌ها را می‌سازد و اجرا می‌کند
-│   ├── migrate/main.go           اجرای migrationها
-│   └── seed/main.go              اجرای seederها
+│   └── api/main.go               سرویس HTTP: همهٔ وابستگی‌ها را می‌سازد و اجرا می‌کند
 ├── internal/
 │   ├── domain/                   کسب‌وکار — بدون HTTP
 │   │   ├── user/
@@ -108,12 +105,10 @@ shop/
 │   ├── platform/                 زیرساخت — بدون قانون کسب‌وکار
 │   │   ├── config/  server/  validate/  health/
 │   │   ├── problem/  trans/      بدنهٔ خطای RFC 9457؛ trans.Message از trans/lang/fa.json می‌خواند
-│   │   ├── database/  database/orm/  database/migrate/
-│   │   ├── database/migrations/  SQL خام، ‎*.up.sql و ‎*.down.sql (داخل باینری embed می‌شوند)
+│   │   ├── database/  database/orm/   bun روی pgx (postgres)
 │   │   ├── trans/lang/fa.json    همهٔ متن‌هایی که API نشان می‌دهد، با کلید
 │   │   ├── cache/
 │   │   └── payment/              کلاینت سرویس‌های دیگر           (make:client)
-│   └── seed/                     seederها                        (make:seeder)
 ├── tests/arch_test.go            اگر لایه‌ای جهت اشتباه import کند، go test خطا می‌دهد
 ├── gortisan, gortisan.bat, gortisan.ps1
 └── go.mod                        فقط echo، bun + pgx، go-redis — همان‌هایی که انتخاب کردید
@@ -153,12 +148,10 @@ api, worker  ──►  domain  ──►  platform
 | `routes/api.php` | `internal/api/v1/routes.go` |
 | `app/Http/Middleware` | `internal/api/middleware/` |
 | `config/` | `internal/platform/config/` (و `.env`) |
-| `database/migrations` | `internal/platform/database/migrations/` |
-| `database/seeders` | `internal/seed/` |
+| `database/migrations`، `php artisan migrate` | ندارد — [جدول‌ها و migration](#جدول‌ها-و-migration) را ببینید |
 | `php artisan serve` | `./gortisan run` |
 | `php artisan make:model User -m` | `./gortisan make:model user` |
 | `php artisan make:controller` | `./gortisan make:handler v1/user/list` |
-| `php artisan migrate` / `migrate:rollback` / `db:seed` | `./gortisan migrate` / `migrate:rollback` / `db:seed` |
 
 ## اسکریپت `./gortisan`
 
@@ -182,7 +175,7 @@ gortisan.bat list               # cmd
 |---|---|
 | `create <name>` | پروژهٔ جدید در `./<name>` |
 | `run [command] [-- args]` | `cmd/api` (یا `cmd/<command>`) را build و اجرا می‌کند و با هر تغییر در فایل `.go`، `go.mod` یا `.env` ری‌استارت می‌کند؛ `--no-watch` یک بار اجرا می‌کند |
-| `make:model <subject>` | `user.go`، `errors.go`، `store.go` و `repository.go` در `internal/domain/<subject>`، و یک migration ساخت جدول *(postgres)* |
+| `make:model <subject>` | `user.go`، `errors.go`، `store.go` و `repository.go` در `internal/domain/<subject>` *(postgres)* |
 | `make:service <subject>` | `service.go`، ساخته‌شده روی `Store` اگر وجود داشته باشد |
 | `make:handler <version>/<subject>/<action>` | یک متد در `internal/api/<version>/<resources>/handler.go`، ورودی‌اش در `request.go` و خروجی‌اش در `response.go`؛ نسخهٔ جدید `routes.go` خودش را می‌گیرد |
 | `make:request <version>/<subject>/<name>` | یک نوع با `Validate` در `request.go` |
@@ -192,17 +185,10 @@ gortisan.bat list               # cmd
 | `make:cache <subject>/<name>` | یک cache تایپ‌شدهٔ Redis دور یک loader در `cache.go` همان domain *(redis)* |
 | `make:middleware <name>` | `internal/api/middleware/<name>.go` |
 | `make:client <name>` | `internal/platform/<name>/client.go`، کلاینت JSON برای یک سرویس دیگر |
-| `make:migration <name>` | فایل‌های خالی `internal/platform/database/migrations/<time>_<name>.{up,down}.sql` |
 | `make:test <subject>` | `service_test.go`: تست سرویس با یک `Store` درون‌حافظه‌ای، بدون دیتابیس |
 | `make:test <version>/<subject>/<action>` | `<action>_test.go`: تست HTTP همان handler |
 | `add <postgres\|redis>` | بخشی را که پروژه بدون آن ساخته شده اضافه می‌کند: فایل‌ها، config، خط‌های `.env.example` و ماژول؛ دو خطی را که باید وصل کنید چاپ می‌کند |
 | `route:list` | همهٔ routeها: متد، مسیر، handler و فایل:خط؛ از `router.go` و `routes.go` هر نسخه خوانده می‌شود |
-| `make:seeder <name>` | `internal/seed/<name>.go`، و `cmd/seed` بار اول |
-| `migrate` | migrationهای اجرانشده را در یک batch اعمال می‌کند |
-| `migrate:rollback [batches]` | آخرین batch (یا چند batch) را برمی‌گرداند |
-| `migrate:status` | همهٔ migrationها و اینکه اجرا شده‌اند یا نه |
-| `migrate:fresh --force` | همهٔ جدول‌ها را حذف و از نو migrate می‌کند — فقط برای محیط توسعه |
-| `db:seed [name]` | seederها را در یک تراکنش اجرا می‌کند |
 | `list`، `help`، `version` | |
 
 موضوع‌ها می‌توانند گروه‌بندی شوند — `make:model sales/order` و `make:handler v1/sales/order/list`. `make handler` (با فاصله) همان `make:handler` است. راهنمایی که برای handler چاپ می‌شود مسیر REST را از اسم action حدس می‌زند: `list` ← `GET /users`، `get` ← `GET /users/:id`، `create` ← `POST /users`، `update` ← `PUT /users/:id`، `delete` ← `DELETE /users/:id`.
@@ -297,7 +283,7 @@ type User struct {
 | `bun:"-"` | ستون نیست |
 | `rel:has-many,join:id=user_id` (و `has-one`، `belongs-to`، `m2m`) | یک رابطه که هر وقت بخواهید بارگذاری می‌شود |
 
-`make:model user --fields "mobile:string,name:string" --soft-delete` struct، repository و migration ساخت جدول را می‌نویسد. برای اضافه کردن ستون، یک فیلد و یک migration اضافه کنید.
+`make:model user --fields "mobile:string,name:string" --soft-delete` struct و repository را می‌نویسد. ساختن خود جدول با شماست ([جدول‌ها و migration](#جدول‌ها-و-migration))؛ برای اضافه کردن ستون، یک فیلد و همان ستون را اضافه کنید.
 
 `internal/platform/database/orm` لایه‌ای کوچک روی bun است که داخل پروژهٔ خودتان قرار دارد. فقط bun، pgx و کتابخانهٔ استاندارد را import می‌کند — هیچ‌وقت config یا domain شما را — و هیچ متغیر سراسری ندارد، پس می‌شود آن را بدون هیچ تغییری به یک ماژول جدا منتقل کرد:
 
@@ -406,29 +392,9 @@ err := orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error {
 
 <div dir="rtl">
 
-## migration و seeder
+## جدول‌ها و migration
 
-</div>
-
-```bash
-./gortisan make:model user                 # internal/platform/database/migrations/<time>_create_users_table.{up,down}.sql را هم می‌سازد
-./gortisan make:migration add_index_to_users
-./gortisan migrate                         # اعمال migrationهای اجرانشده
-./gortisan migrate:status
-./gortisan migrate:rollback                # برگرداندن آخرین batch
-./gortisan make:seeder users && ./gortisan db:seed
-```
-
-<div dir="rtl">
-
-اجراکنندهٔ migration بخشی از پروژهٔ خودتان است — `internal/platform/database/migrate`، چند صد خط روی `database/sql` (همان `db.DB` در bun) — و `cmd/migrate` یک دستور معمولی است که در production قبل از اینکه نسخهٔ جدید ترافیک بگیرد build و اجرایش می‌کنید. فایل‌های SQL داخل باینری embed می‌شوند (`internal/platform/database/migrations/migrations.go`)، پس image به چیز دیگری نیاز ندارد.
-
-- migrationهای اعمال‌شده با یک شمارهٔ **batch** در `schema_migrations` ثبت می‌شوند؛ `migrate:rollback` مثل لاراول batchها را کامل، از جدیدترین، برمی‌گرداند.
-- هر migration همراه ثبتش **در یک تراکنش** اجرا می‌شود. فایلی که خط `-- migrate:no-transaction` دارد بیرون از تراکنش اجرا می‌شود؛ برای `CREATE INDEX CONCURRENTLY`.
-- یک **advisory lock در Postgres** باعث می‌شود فقط یک پروسه در هر لحظه migrate کند؛ پس replicaهایی که هم‌زمان بالا می‌آیند هیچ migrationی را دو بار اجرا نمی‌کنند.
-- دو `make:migration` در یک ثانیه نسخه‌های متفاوت می‌گیرند.
-
-seederها تابع‌هایی در `internal/seed` هستند که یک `orm.IDB` می‌گیرند و از repositoryهای domain استفاده می‌کنند؛ `cmd/seed` آن‌ها را به ترتیب فهرست می‌کند و در یک تراکنش اجرا می‌کند (`./gortisan db:seed users` فقط یکی را اجرا می‌کند).
+gortisan جدول نمی‌سازد و اجراکنندهٔ migration یا seeder هم تولید نمی‌کند. `make:model` سمت Go را می‌نویسد — struct با تگ‌های bun و repository — و schema با شماست: جدول‌ها را دستی بسازید یا با ابزار migration دلخواهتان ([goose](https://github.com/pressly/goose)، [golang-migrate](https://github.com/golang-migrate/migrate)، [Atlas](https://atlasgo.io) و …). اگر ابزارتان دستور جدا لازم دارد، می‌تواند در `cmd/migrate` باشد؛ `./gortisan run` پوشه‌های `cmd/migrate`، `cmd/seed` و `cmd/worker` را اجرا نمی‌کند مگر اینکه نامشان را بدهید.
 
 ## اعتبارسنجی و خطاها
 

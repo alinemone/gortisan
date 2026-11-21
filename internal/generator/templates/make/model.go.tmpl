@@ -10,8 +10,8 @@ import (
 )
 
 // {{.Type}} is a row of {{.Table}}. Every field with a bun tag is a column;
-// to add one, add a field — e.g. Name string `bun:"name" json:"name"` — and a
-// migration (./gortisan make:migration add_name_to_{{.Table}}).
+// to add one, add a field — e.g. Name string `bun:"name" json:"name"` — and
+// the column to the {{.Table}} table.
 //
 // Relations are fields too, loaded with orm.With in the repository, e.g.
 //

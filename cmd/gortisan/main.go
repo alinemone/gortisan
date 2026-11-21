@@ -17,10 +17,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -39,16 +37,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		usage(stderr)
 		return 2
 	}
-	// migrate, migrate:<sub> and db:seed run the project's own cmd/migrate
-	// and cmd/seed: gortisan holds no database code.
-	switch {
-	case args[0] == "migrate":
-		return runProject("migrate", args[1:], stdout, stderr)
-	case strings.HasPrefix(args[0], "migrate:"):
-		return runProject("migrate", append([]string{strings.TrimPrefix(args[0], "migrate:")}, args[1:]...), stdout, stderr)
-	case args[0] == "db:seed":
-		return runProject("seed", args[1:], stdout, stderr)
-	case args[0] == "route:list" || args[0] == "routes":
+	if args[0] == "route:list" || args[0] == "routes" {
 		return runRouteList(stdout, stderr)
 	}
 
@@ -280,40 +269,6 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runProject is `go run ./cmd/<command> args...` in the project root.
-func runProject(command string, args []string, stdout, stderr io.Writer) int {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintln(stderr, "gortisan:", err)
-		return 1
-	}
-	project, err := generator.FindProject(cwd)
-	if err != nil {
-		fmt.Fprintln(stderr, "gortisan:", err)
-		return 1
-	}
-	if _, err := os.Stat(filepath.Join(project.Root, "cmd", command, "main.go")); err != nil {
-		hint := "it is created with postgres"
-		if command == "seed" {
-			hint = "run gortisan make:seeder <name> first"
-		}
-		fmt.Fprintf(stderr, "gortisan: cmd/%s is missing; %s\n", command, hint)
-		return 1
-	}
-	cmd := exec.Command("go", append([]string{"run", "./cmd/" + command}, args...)...)
-	cmd.Dir = project.Root
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, stderr
-	if err := cmd.Run(); err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			return exit.ExitCode()
-		}
-		fmt.Fprintln(stderr, "gortisan:", err)
-		return 1
-	}
-	return 0
-}
-
 // runAdd is `gortisan add <postgres|redis>`.
 func runAdd(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 1 {
@@ -391,11 +346,6 @@ Usage:
       --no-watch                        run once, without watching
   gortisan add <postgres|redis>         add a piece the project was created without
 
-  gortisan migrate                      apply pending migrations (runs go run ./cmd/migrate)
-  gortisan migrate:rollback [batches]   undo the last batch (or several)
-  gortisan migrate:status               list migrations and whether they ran
-  gortisan migrate:fresh --force        drop every table and migrate again (development only)
-  gortisan db:seed [name]               run the seeders of internal/seed (go run ./cmd/seed)
   gortisan route:list                   every route: method, path, handler, file
 
   gortisan make:<kind> <name> [flags]   add code. A project has four layers:
@@ -403,8 +353,7 @@ Usage:
         internal/api/<version>/       HTTP, one package per resource, named like its URL: users, orders
         internal/platform/            infrastructure
 
-    model <subject>                     <subject>.go, errors.go, store.go, repository.go,
-                                        and a migration (postgres)
+    model <subject>                     <subject>.go, errors.go, store.go, repository.go
         --fields "mobile:string,name:string"   optional; or add bun-tagged fields later
                                         types: string, int, int32, int16, float, bool,
                                         time, json; a trailing ? makes it nullable
@@ -423,8 +372,6 @@ Usage:
     cache <subject>/<name> [--type T]   a typed Redis cache in the domain's cache.go (redis)
     middleware <name>                   internal/api/middleware/<name>.go
     client <name>                       internal/platform/<name>/client.go, an HTTP client
-    migration <name>                    empty database/migrations/<time>_<name>.{up,down}.sql
-    seeder <name>                       internal/seed/<name>.go, and cmd/seed
     test <subject>                      service_test.go with an in-memory Store
     test <version>/<subject>/<action>   <action>_test.go for that handler
 
