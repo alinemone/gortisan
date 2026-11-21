@@ -1,17 +1,17 @@
 // Package tests holds the tests that span packages. Unit tests stay next to
 // the code they test.
 //
-// The code of the service, in internal/, is in four layers. TestLayers
-// fails when one layer depends on another the wrong way:
+// TestDependencies fails `go test ./...` when a package of internal/ imports
+// one it must not:
 //
-//	api, worker  ->  domain  ->  platform
+//   - A feature (internal/user, internal/sales/order, ...) never imports
+//     another feature. One feature calls another through a small interface
+//     it declares itself, and internal/app connects the two.
+//   - Shared packages — config, server, platform, clients, external,
+//     migrations — never import a feature: they know nothing of the business.
+//   - Nothing imports internal/app; only cmd/ does.
 //
-//   - domain is the business: it never knows about HTTP or Kafka.
-//   - platform is infrastructure: it never knows about the business.
-//   - api and worker are entry points: they never import each other.
-//   - an API version never imports another version (v2 must not break v1).
-//
-// It runs with `go test ./...` and needs nothing but the standard library.
+// It needs nothing but the standard library.
 package tests
 
 import (
@@ -20,44 +20,43 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 )
 
-// forbidden lists, for each layer, the layers it must not import.
-var forbidden = map[string][]string{
-	"platform": {"domain", "api", "worker"},
-	"domain":   {"api", "worker"},
-	"api":      {"worker"},
-	"worker":   {"api"},
+// shared are the directories of internal/ that are not features.
+var shared = map[string]bool{
+	"app": true, "config": true, "server": true, "platform": true,
+	"clients": true, "external": true, "migrations": true,
 }
 
-func TestLayers(t *testing.T) {
+func TestDependencies(t *testing.T) {
 	module := modulePath(t)
 	root := filepath.Join("..", "internal")
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+	err := filepath.WalkDir(root, func(file string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(file, ".go") || strings.HasSuffix(file, "_test.go") {
 			return err
 		}
-		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ImportsOnly)
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, path)
+		rel, err := filepath.Rel(root, file)
 		if err != nil {
 			return err
 		}
-		from := filepath.ToSlash(rel)
-		for _, imp := range file.Imports {
+		from := path.Dir(filepath.ToSlash(rel))
+		for _, imp := range parsed.Imports {
 			target, _ := strconv.Unquote(imp.Path.Value)
-			rest, ok := strings.CutPrefix(target, module+"/internal/")
+			to, ok := strings.CutPrefix(target, module+"/internal/")
 			if !ok {
 				continue
 			}
-			if reason := violation(from, rest); reason != "" {
-				t.Errorf("internal/%s imports %s: %s", from, target, reason)
+			if reason := violation(from, to); reason != "" {
+				t.Errorf("internal/%s imports internal/%s: %s", filepath.ToSlash(rel), to, reason)
 			}
 		}
 		return nil
@@ -67,37 +66,29 @@ func TestLayers(t *testing.T) {
 	}
 }
 
-// violation explains why a file at from (relative to internal/) must not
-// import the package at to (also relative to internal/), or returns "".
+// violation explains why the package at from (a directory relative to
+// internal/) must not import the package at to, or returns "".
 func violation(from, to string) string {
-	fromLayer, toLayer := layer(from), layer(to)
-	for _, banned := range forbidden[fromLayer] {
-		if toLayer == banned {
-			return fromLayer + " must not depend on " + toLayer
-		}
-	}
-	if fromLayer == "api" && toLayer == "api" {
-		if a, b := apiVersion(from), apiVersion(to); a != "" && b != "" && a != b {
-			return "API " + a + " must not depend on API " + b
-		}
+	switch {
+	case top(to) == "app":
+		return "only cmd/ builds the service; nothing in internal/ imports app"
+	case shared[top(from)] && top(from) != "app" && !shared[top(to)]:
+		return top(from) + " is shared and must not know about the " + to + " feature"
+	case !shared[top(from)] && !shared[top(to)] && !within(from, to) && !within(to, from):
+		return "features do not import each other; declare a small interface in " + from + " and connect the two in internal/app"
 	}
 	return ""
 }
 
-func layer(path string) string {
+// top is the first directory of path: "sales" for "sales/order".
+func top(path string) string {
 	first, _, _ := strings.Cut(path, "/")
 	return first
 }
 
-// apiVersion returns "v1" for "api/v1/users/handler.go".
-func apiVersion(path string) string {
-	parts := strings.Split(path, "/")
-	if len(parts) > 1 && strings.HasPrefix(parts[1], "v") {
-		if _, err := strconv.Atoi(parts[1][1:]); err == nil {
-			return parts[1]
-		}
-	}
-	return ""
+// within reports whether pkg is dir or inside it.
+func within(pkg, dir string) bool {
+	return pkg == dir || strings.HasPrefix(pkg, dir+"/")
 }
 
 func modulePath(t *testing.T) string {
@@ -119,14 +110,19 @@ func modulePath(t *testing.T) string {
 
 func TestViolation(t *testing.T) {
 	cases := map[[2]string]bool{
-		{"domain/user/service.go", "platform/database"}: false,
-		{"api/v1/users/handler.go", "domain/user"}:     false,
-		{"api/v2/users/handler.go", "api/v1/users"}:  true,
-		{"api/v1/routes.go", "api/v1/users"}:           false,
-		{"api/router.go", "api/v2"}:                      false,
-		{"domain/user/service.go", "api/v1/users"}:     true,
-		{"platform/cdc/cdc.go", "domain/user"}:           true,
-		{"worker/userworker/worker.go", "api/v1"}:        true,
+		{"user", "platform/orm"}:             false,
+		{"user", "server/validate"}:          false,
+		{"sales/order", "clients/wallet"}:    false,
+		{"sales/order/events", "sales/order"}: false,
+		{"app", "user"}:                       false,
+		{"app", "platform"}:                   false,
+		{"user", "order"}:                     true,
+		{"sales/order", "sales/payment"}:      true,
+		{"server", "user"}:                    true,
+		{"platform", "sales/order"}:           true,
+		{"clients/wallet", "user"}:            true,
+		{"user", "app"}:                       true,
+		{"server", "app"}:                     true,
 	}
 	for c, want := range cases {
 		if got := violation(c[0], c[1]) != ""; got != want {

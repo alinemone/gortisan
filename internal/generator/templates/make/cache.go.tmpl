@@ -18,7 +18,7 @@ type {{.Type}} struct {
 	load   func(ctx context.Context, key string) ({{.Value}}, error)
 }
 
-// New{{.Type}} builds the cache in main.go, e.g.
+// New{{.Type}} builds the cache in internal/app/serve.go, e.g.
 //
 //	{{.Pkg}}.New{{.Type}}(rdb, time.Hour, func(ctx context.Context, key string) ({{.Value}}, error) {
 //		return service.Something(ctx, key)

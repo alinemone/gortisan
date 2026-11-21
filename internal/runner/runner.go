@@ -26,7 +26,8 @@ import (
 type Options struct {
 	// Root is the project root (the directory of go.mod).
 	Root string
-	// Target is the directory under cmd/ to run, e.g. "shop" or "worker".
+	// Target is what to build: "." for the root package (a project whose
+	// main.go runs Cobra commands), or a directory under cmd/, e.g. "worker".
 	Target string
 	// Args are passed to the program.
 	Args []string
@@ -39,6 +40,23 @@ type Options struct {
 	// BeforeBuild runs before every build, e.g. to regenerate code. An error
 	// is reported like a failed build.
 	BeforeBuild func() error
+}
+
+// label names what runs, for messages: "go run . serve" for the root
+// package, "cmd/worker" for a command directory.
+func (o Options) label() string {
+	if o.Target == "." {
+		return strings.TrimSpace("go run . " + strings.Join(o.Args, " "))
+	}
+	return "cmd/" + o.Target
+}
+
+// HasRootCommand reports whether the project's root package is the program:
+// a main.go next to go.mod, as in projects whose commands are Cobra
+// subcommands (serve, migrate, ...).
+func HasRootCommand(root string) bool {
+	src, err := os.ReadFile(filepath.Join(root, "main.go"))
+	return err == nil && strings.Contains(string(src), "package main")
 }
 
 // ResolveTarget picks the command to run: name when given, otherwise api,
@@ -90,7 +108,7 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	binary := filepath.Join(dir, o.Target)
+	binary := filepath.Join(dir, "program")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
@@ -118,7 +136,7 @@ func Run(ctx context.Context, o Options) error {
 			}
 			fmt.Fprintf(o.Stderr, "gortisan run: build failed; waiting for a change\n")
 		} else {
-			fmt.Fprintf(o.Stderr, "gortisan run: started cmd/%s\n", o.Target)
+			fmt.Fprintf(o.Stderr, "gortisan run: started %s\n", o.label())
 			if proc, err = start(binary, o); err != nil {
 				return err
 			}
@@ -162,9 +180,9 @@ func waitForChange(ctx context.Context, o Options, before map[string]stamp, proc
 		case <-exited:
 			exited = nil
 			if proc.err != nil {
-				fmt.Fprintf(o.Stderr, "gortisan run: cmd/%s exited: %v; waiting for a change\n", o.Target, proc.err)
+				fmt.Fprintf(o.Stderr, "gortisan run: %s exited: %v; waiting for a change\n", o.label(), proc.err)
 			} else {
-				fmt.Fprintf(o.Stderr, "gortisan run: cmd/%s exited; waiting for a change\n", o.Target)
+				fmt.Fprintf(o.Stderr, "gortisan run: %s exited; waiting for a change\n", o.label())
 			}
 		case <-ticker.C:
 			now, err := snapshot(o.Root)
@@ -186,7 +204,11 @@ func buildIfPrepared(ctx context.Context, o Options, binary string, prepareErr e
 }
 
 func build(ctx context.Context, o Options, binary string) error {
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/"+o.Target)
+	pkg := "./cmd/" + o.Target
+	if o.Target == "." {
+		pkg = "."
+	}
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", binary, pkg)
 	cmd.Dir = o.Root
 	cmd.Stdout = o.Stderr
 	cmd.Stderr = o.Stderr

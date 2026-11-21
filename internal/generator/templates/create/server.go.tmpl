@@ -13,8 +13,8 @@ import (
 
 	"github.com/labstack/echo/v5"
 
-	"{{.Module}}/internal/platform/config"
-	"{{.Module}}/internal/platform/problem"
+	"{{.Module}}/internal/config"
+	"{{.Module}}/internal/server/response"
 )
 
 // New returns echo with request logging, panic recovery and problem details
@@ -147,7 +147,7 @@ func errorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
 			return
 		}
 		status := http.StatusInternalServerError
-		var body any = problem.New(status, "")
+		var body any = response.New(status, "")
 
 		var withBody bodyError
 		var httpErr *echo.HTTPError
@@ -161,17 +161,17 @@ func errorHandler(logger *slog.Logger) echo.HTTPErrorHandler {
 			if detail == http.StatusText(status) {
 				detail = "" // the title already says it
 			}
-			body = problem.New(status, detail)
+			body = response.New(status, detail)
 		case errors.As(err, &coder):
 			status = coder.StatusCode()
-			body = problem.New(status, "")
+			body = response.New(status, "")
 		}
 
 		var writeErr error
 		if c.Request().Method == http.MethodHead {
 			writeErr = c.NoContent(status)
 		} else {
-			c.Response().Header().Set(echo.HeaderContentType, problem.ContentType)
+			c.Response().Header().Set(echo.HeaderContentType, response.ContentType)
 			writeErr = c.JSON(status, body)
 		}
 		if writeErr != nil {

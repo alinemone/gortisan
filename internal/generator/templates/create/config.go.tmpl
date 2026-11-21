@@ -60,7 +60,10 @@ type Redis struct {
 // HTTP is the server: its port and the timeouts that keep slow or idle
 // clients from holding connections open.
 type HTTP struct {
-	Port              string
+	Port string
+	// BasePath is where every feature's routes are mounted, e.g. /api; a
+	// feature's routes.go adds its own path to it (/api/users).
+	BasePath          string
 	ReadHeaderTimeout time.Duration
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
@@ -81,6 +84,7 @@ func Load() (Config, error) {
 		Debug: r.boolean("DEBUG", false),
 		HTTP: HTTP{
 			Port:              r.str("PORT", "8000"),
+			BasePath:          r.str("BASE_PATH", "{{.BasePath}}"),
 			ReadHeaderTimeout: r.duration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
 			ReadTimeout:       r.duration("HTTP_READ_TIMEOUT", 30*time.Second),
 			WriteTimeout:      r.duration("HTTP_WRITE_TIMEOUT", 30*time.Second),

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Starts {{.Name}} with the command given to the container (serve by default).
+{{- if .Migrations}}
+# With RUN_MIGRATIONS=true it applies the pending migrations first; replicas
+# that start together wait for each other (a Postgres advisory lock).
+{{- end}}
+set -e
+{{- if .Migrations}}
+
+if [ "$RUN_MIGRATIONS" = "true" ]; then
+	/usr/local/bin/{{.Name}} migrate up
+fi
+{{- end}}
+
+exec /usr/local/bin/{{.Name}} "$@"

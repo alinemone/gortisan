@@ -4,33 +4,29 @@
 
 [English](README.md) | **فارسی**
 
-[![test](https://github.com/alinemone/gortisan/actions/workflows/test.yml/badge.svg)](https://github.com/alinemone/gortisan/actions/workflows/test.yml)
+تولیدکنندهٔ کد برای سرویس‌های HTTP در Go روی [echo v5](https://echo.labstack.com)، با حال‌وهوای `artisan` لاراول، ولی بدون هیچ فریم‌ورکی پشتش.
 
-یک تولیدکنندهٔ کد برای سرویس‌های HTTP در Go روی [echo v5](https://echo.labstack.com)، با حال‌وهوای `artisan` لاراول — اما بدون هیچ فریم‌ورکی پشتش.
+یک ساختار feature-first برای همهٔ سرویس‌های تیم: دستورهای Cobra در `cmd/`، یک پکیج برای هر feature در `internal/`، و wiring در `internal/app`. gortisan فایل‌ها را می‌نویسد، وصلشان می‌کند و همان‌جا کارش تمام می‌شود: پروژه **gortisan را import نمی‌کند**، gortisan **در `go.mod` آن نیست**، و در زمان اجرای درخواست هیچ چیزی اجرا نمی‌شود که نتوانید در ریپوی خودتان بخوانید.
 
-یک ساختار پروژه که طوری انتخاب شده که **مبتدی هیچ‌وقت مجبور نباشد تصمیم بگیرد فایل کجا برود**، و آن‌قدر محکم است که تیمی با صد جدول و سه نسخهٔ API هم از آن بزرگ‌تر نشود. gortisan فایل‌ها را می‌نویسد و کنار می‌رود: پروژه **هیچ چیزی از gortisan ایمپورت نمی‌کند**، gortisan **در `go.mod` پروژه نیست**، و در زمان اجرا هیچ کدی اجرا نمی‌شود که خودتان نتوانید در مخزن خودتان بخوانید.
-
-> **وضعیت:** آزمایشی (`v0.0.x`). دستورها و قالب‌ها هنوز ممکن است تغییر کنند.
+> **وضعیت:** پیش‌نمایش (`v0.x`). از `v1.0.0` به بعد هیچ نسخه‌ای پروژه‌های موجود را خراب نمی‌کند — [COMPATIBILITY.fa.md](COMPATIBILITY.fa.md) را ببینید.
 
 - [نصب](#نصب)
 - [شروع سریع](#شروع-سریع)
 - [ساختار پروژه](#ساختار-پروژه)
-- [اگر از لاراول می‌آیید](#اگر-از-لاراول-میآیید)
-- [اسکریپت `./gortisan`](#اسکریپت-gortisan)
 - [دستورها](#دستورها)
-- [نسخه‌های API](#نسخههای-api)
+- [featureها](#featureها)
+- [migration](#migration)
+- [Swagger](#swagger)
 - [لایهٔ دیتابیس](#لایهٔ-دیتابیس)
-- [جدول‌ها و migration](#جدول‌ها-و-migration)
 - [اعتبارسنجی و خطاها](#اعتبارسنجی-و-خطاها)
-- [اضافه کردن auth، Sentry و…](#اضافه-کردن-authsentry-و)
-- [بدون مجیک: قانون‌ها](#بدون-مجیک-قانونها)
-- [وابستگی‌ها](#وابستگیها)
-- [هنوز پشتیبانی نمی‌شود](#هنوز-پشتیبانی-نمیشود)
+- [دستورهای بیشتر: worker و schedule](#دستورهای-بیشتر-worker-و-schedule)
+- [نسخه‌ها و به‌روزرسانی](#نسخه‌ها-و-به‌روزرسانی)
+- [بدون جادو: قواعد](#بدون-جادو-قواعد)
 - [توسعه](#توسعه)
 
 ## نصب
 
-به Go نسخهٔ ۱.۲۶ یا بالاتر نیاز دارد.
+به Go نسخهٔ 1.26 یا بالاتر نیاز دارد.
 
 </div>
 
@@ -41,37 +37,65 @@ gortisan version
 
 <div dir="rtl">
 
+### اگر Go نتوانست gortisan را پیدا کند
+
+gortisan یک ماژول خصوصی روی GitLab شرکت است. اگر `go install` یا اسکریپت `./gortisan` یک پروژه گفت ماژول پیدا نشد (`404`، `unknown revision` یا `terminal prompts disabled`)، یک بار تنظیمات Go شرکت را اعمال کنید:
+
+</div>
+
+```bash
+go env -w GOPRIVATE=git.basalam.dev
+go env -w GOPROXY=https://repo.basalam.dev/artifactory/api/go/basalam-golang-local,https://proxy.golang.org,direct
+```
+
+<div dir="rtl">
+
+و اجازه دهید Go با همان کلید SSH که برای git استفاده می‌کنید به GitLab وصل شود:
+
+</div>
+
+```bash
+git config --global url."git@git.basalam.dev:".insteadOf "https://git.basalam.dev/"
+```
+
+<div dir="rtl">
+
+`GOPRIVATE` باعث می‌شود Go ماژول‌های `git.basalam.dev` را مستقیم از git بگیرد و سراغ پایگاه checksum عمومی نرود. با `go env GOPRIVATE GOPROXY` می‌توانید تنظیمات را بررسی کنید.
+
+</div>
+
+<div dir="rtl">
+
 ## شروع سریع
 
 </div>
 
 ```bash
-gortisan create shop github.com/you/shop   # or: gortisan create github.com/you/shop
+gortisan create shop github.com/you/shop   # یا: gortisan create github.com/you/shop
 cd shop
-cp .env.example .env          # آدرس PostgreSQL و Redis را بدهید
-./gortisan run                # build، اجرا، و ری‌استارت با هر تغییر
-```
-
-```bash
-curl localhost:8000/ping      # {"ping":"pong"}
-curl localhost:8000/health    # {"status":"pass","checks":{"postgres":"up","redis":"up"}}
+cp .env.example .env                       # آدرس PostgreSQL و Redis را تنظیم کنید
+./gortisan make:feature user --fields "mobile:string,name:string"
+./gortisan make:handler user/list
+go run . migrate up
+./gortisan run                             # go run . serve، با ری‌استارت بعد از هر تغییر
+curl localhost:8000/api/users
 ```
 
 <div dir="rtl">
 
-کاربران را با یک endpoint لیست اضافه کنید:
+`make:feature` پکیج feature را می‌سازد و آن را در `internal/app/serve.go` وصل می‌کند. `make:handler` خود handler، request و response آن و route را می‌نویسد. هر دستور در پایان چاپ می‌کند چه چیزی را باید دستی انجام داد.
+
+سرویسی که **دیتابیسش از قبل وجود دارد** migration را کنار می‌گذارد:
 
 </div>
 
 ```bash
-./gortisan make:model user --fields "mobile:string,name:string" --soft-delete
-./gortisan make:service user
-./gortisan make:handler v1/user/list
+gortisan create shop --with postgres,redis,swagger
 ```
 
 <div dir="rtl">
 
-هر دستور چیزی را که باید دستی وصل کنید چاپ می‌کند — یک خط در `v1/routes.go`، یک خط در `main.go` — و gortisan هیچ‌وقت کدی را که خودتان نوشته‌اید بازنویسی نمی‌کند.
+`--with` از بین `postgres`، `redis`، `migrations` (به postgres نیاز دارد) و `swagger` انتخاب می‌کند و پیش‌فرض همه است. با `gortisan add <component>` می‌شود بعداً اضافه کرد.
 
 ## ساختار پروژه
 
@@ -79,192 +103,140 @@ curl localhost:8000/health    # {"status":"pass","checks":{"postgres":"up","redi
 
 ```
 shop/
-├── cmd/
-│   └── api/main.go               سرویس HTTP: همهٔ وابستگی‌ها را می‌سازد و اجرا می‌کند
+├── main.go                      cmd.Execute() و اطلاعات کلی Swagger
+├── cmd/                         فقط دستورهای Cobra: آرگومان‌ها، بعد internal/app
+│   ├── root.go                  همهٔ دستورهای سرویس، در یک فهرست
+│   ├── serve.go                 shop serve
+│   └── migrate.go               shop migrate up | down | status
+├── docs/                        خروجی swag — دستی ویرایش نمی‌شود
 ├── internal/
-│   ├── domain/                   کسب‌وکار — بدون HTTP
-│   │   ├── user/
-│   │   │   ├── user.go           نوع User: جدول، یک struct با تگ bun
-│   │   │   ├── errors.go         ErrNotFound و…: خطاها به زبان کسب‌وکار
-│   │   │   ├── store.go          Store: آنچه سرویس از ذخیره‌سازی لازم دارد
-│   │   │   ├── repository.go     Repository: پیاده‌سازی Store روی orm.Repository[User]
-│   │   │   ├── service.go        Service: قانون‌ها — تنها ورودی برای بقیه
-│   │   │   └── status.go …       enum، cache                   (make:enum user/status …)
-│   │   └── sales/                وقتی موضوع‌ها زیاد شد گروه‌بندی کنید
-│   │       ├── order/
-│   │       └── payment/
-│   ├── api/                      HTTP — یک ورودی به domain
-│   │   ├── router.go             ‎/ping و ‎/health و یک خط برای هر نسخه
-│   │   ├── middleware/
-│   │   ├── validator/            ولیدیتورهای مشترک، گروه‌بندی‌شده: address/mobile.go …  (make:validator)
-│   │   ├── v1/
-│   │   │   ├── routes.go         همهٔ endpointهای v1 در یک فایل
-│   │   │   ├── users/            handler.go  request.go  response.go
-│   │   │   └── sales/orders/
-│   │   └── v2/                   فقط چیزهایی که در v2 عوض شده
-│   ├── platform/                 زیرساخت — بدون قانون کسب‌وکار
-│   │   ├── config/  server/  validate/  health/
-│   │   ├── problem/  trans/      بدنهٔ خطای RFC 9457؛ trans.Message از trans/lang/fa.json می‌خواند
-│   │   ├── database/  database/orm/   bun روی pgx (postgres)
-│   │   ├── trans/lang/fa.json    همهٔ متن‌هایی که API نشان می‌دهد، با کلید
-│   │   ├── cache/
-│   │   └── payment/              کلاینت سرویس‌های دیگر           (make:client)
-├── tests/arch_test.go            اگر لایه‌ای جهت اشتباه import کند، go test خطا می‌دهد
-├── gortisan, gortisan.bat, gortisan.ps1
-└── go.mod                        فقط echo، bun + pgx، go-redis — همان‌هایی که انتخاب کردید
+│   ├── app/                     wiring: اتصال‌ها ← featureها ← routeها
+│   │   ├── serve.go
+│   │   └── migrate.go
+│   ├── config/                  Config، خوانده‌شده از environment و .env
+│   ├── user/                    یک پکیج برای هر feature (make:feature user)
+│   │   ├── user.go              entity و خطاها
+│   │   ├── service.go           use caseها و interface Repository که لازم دارند
+│   │   ├── postgres.go          Repository روی دیتابیس
+│   │   ├── handler.go           handlerهای echo با کامنت‌های swag
+│   │   ├── dto.go               requestها و responseها
+│   │   ├── routes.go            RegisterRoutes(api, h): مسیرها زیر BASE_PATH
+│   │   └── service_test.go      table-driven با Repository جعلی
+│   ├── sales/order/             featureها را می‌شود گروه‌بندی کرد
+│   ├── server/                  echo، middleware/، response/ (RFC 9457)، validate/، validator/
+│   ├── platform/                postgres.go، redis.go، orm/، trans/
+│   ├── clients/wallet/          کلاینت سرویس‌های داخلی خودمان   (make:client)
+│   ├── external/bale/           کلاینت APIهای بیرونی             (make:external)
+│   └── migrations/              migrationهای SQL، embed شده (goose)
+├── tests/arch_test.go           قواعد وابستگی، با go test ./... اجرا می‌شود
+├── deploy/                      Dockerfile و entrypoint.sh
+├── AGENTS.md، CLAUDE.md، .agents/skills/   قواعد و skillها برای coding agentها
+├── .gortisan.json               ساختار و اجزای پروژه، برای نسخه‌های بعدی gortisan
+└── gortisan، gortisan.bat، gortisan.ps1
 ```
 
 <div dir="rtl">
 
-**نام‌گذاری.** پکیج domain مفرد است — `user`، شامل `user.User` و `user.Service`. پکیج HTTP هم‌نام URL است — `‎/v1/users` در `internal/api/v1/users`، شامل `users.Handler` و `users.ListRequest`. این دو هیچ‌وقت با هم تداخل ندارند، پس هیچ importی alias لازم ندارد.
+**جهت وابستگی:** `main.go ← cmd ← internal/app ← feature (handler ← service ← Repository → postgres)`. فقط `internal/app` نوع‌های واقعی را می‌شناسد. featureها از `server`، `platform`، `clients` و `external` استفاده می‌کنند؛ این‌ها هیچ‌وقت featureی را import نمی‌کنند، و هیچ featureی هم feature دیگری را import نمی‌کند — یک interface کوچک تعریف می‌کند و `internal/app` feature دیگر را به آن می‌دهد. اگر قاعده‌ای شکسته شود، `tests/arch_test.go` تست را رد می‌کند.
 
-**چرا این شکل.** از [ساختار سرور تیم Go](https://go.dev/doc/modules/layout#server-project) پیروی می‌کند (دستورها در `cmd/` و بقیه در `internal/`) و از [راهنمای سبک Google](https://google.github.io/styleguide/go/best-practices#package-size) دربارهٔ پکیج‌ها: کدی که با هم استفاده می‌شود کنار هم است (همهٔ `user` در یک پکیج، در فایل‌های متمرکز)، و نام‌ها اسم پکیج را تکرار نمی‌کنند (`user.Service`). لایه‌های بالایی — همان تقسیمی که [پروژهٔ service از Ardan Labs](https://github.com/ardanlabs/service) دارد — باعث می‌شوند با بزرگ شدن پروژه هم همین شکل کار کند:
+**مسیرها:** همهٔ featureها زیر `BASE_PATH` (پیش‌فرض `/api`) سوار می‌شوند و `routes.go` هر feature مسیر خودش را نسبت به آن تعیین می‌کند؛ مثلاً `api.Group("/users")` می‌شود `/api/users`. featureی که نسخه لازم دارد، آن را در مسیرش می‌گذارد (`/v2/users`). `/ping`، `/health` و `/swagger/*` بیرون از `BASE_PATH` هستند.
 
-- **بیست موضوع یا دویست موضوع**، همه در `domain/` هستند و هیچ‌وقت با `config` و `database` قاطی نمی‌شوند؛ وقتی یک پوشه شلوغ شد گروه‌بندی کنید (`sales/order`).
-- **domain نمی‌داند چه کسی صدایش می‌زند.** HTTP (`api/`)، یک consumer صف که خودتان اضافه می‌کنید (`worker/`)، یک CLI یا بعدها gRPC — همه همان `user.Service` را صدا می‌زنند.
-- **وابستگی‌ها یک‌طرفه‌اند** و یک تست آن را اجبار می‌کند:
+## دستورها
 
-</div>
-
-```
-api, worker  ──►  domain  ──►  platform
-```
-
-<div dir="rtl">
-
-`tests/arch_test.go` خطا می‌دهد اگر domain پکیج `api` را import کند، اگر `platform` به domain وابسته شود، یا اگر `api/v2` پکیج `api/v1` را import کند.
-
-**فایل‌هایی که به آن‌ها اضافه می‌شود.** فایل‌هایی که یک نوع تعریف را جمع می‌کنند — `handler.go`، `request.go`، `response.go`، `cache.go` — با اولین دستوری که لازمشان دارد ساخته می‌شوند و دستورهای بعدی به آن‌ها اضافه می‌کنند: `make:handler v1/user/get` یک متد به `handler.go`، نوع `GetRequest` به `request.go` و `GetResponse` به `response.go` اضافه می‌کند، همراه importهای لازم. هیچ چیزی از محتوای قبلی فایل عوض نمی‌شود؛ اگر اسمی از قبل وجود داشته باشد دست‌نخورده می‌ماند و گزارش می‌شود.
-
-## اگر از لاراول می‌آیید
-
-| لاراول | gortisan |
+| دستور | کاری که می‌کند |
 |---|---|
-| `app/Models/User.php` | `internal/domain/user/user.go` |
-| یک کلاس Service | `internal/domain/user/service.go` |
-| `app/Http/Controllers/Api/V1/UserController.php` | `internal/api/v1/users/handler.go` |
-| `app/Http/Requests/…Request.php` | `internal/api/v1/users/request.go` |
-| `app/Http/Resources/UserResource.php` | `internal/api/v1/users/response.go` |
-| `routes/api.php` | `internal/api/v1/routes.go` |
-| `app/Http/Middleware` | `internal/api/middleware/` |
-| `config/` | `internal/platform/config/` (و `.env`) |
-| `database/migrations`، `php artisan migrate` | ندارد — [جدول‌ها و migration](#جدول‌ها-و-migration) را ببینید |
-| `php artisan serve` | `./gortisan run` |
-| `php artisan make:model User -m` | `./gortisan make:model user` |
-| `php artisan make:controller` | `./gortisan make:handler v1/user/list` |
+| `create <name> [<module>]` | پروژهٔ جدید در `./<name>`؛ `--with`، `--no-tidy` |
+| `make:feature <name>` | پکیج feature، وصل‌شده در `internal/app`؛ `--fields`، `--table`، `--soft-delete`؛ با migrations، migration ساخت جدولش |
+| `make:handler <feature>/<action>` | متد handler (با کامنت swag)، `<Action>Request` و `<Action>Response` در `dto.go`، و route در `routes.go` |
+| `make:migration <name>` | فایل خالی `internal/migrations/<time>_<name>.sql` |
+| `make:enum <feature>/<name>` | یک enum: ثابت‌ها، `String`، `Valid`، `Parse…`؛ `--members`، `--type` |
+| `make:cache <feature>/<name>` | یک cache تایپ‌شدهٔ Redis در `cache.go` همان feature؛ `--type` |
+| `make:validator [<group>/]<name>` | ولیدیتور قابل استفادهٔ مجدد در `internal/server/validator` و کلید پیامش در `fa.json` |
+| `make:middleware <name>` | `internal/server/middleware/<name>.go` |
+| `make:client <name>` / `make:external <name>` | کلاینت HTTP در `internal/clients/<name>` / `internal/external/<name>` |
+| `make:test <feature>[/<action>]` | تست سرویس، یا تست HTTP یک action |
+| `add <component>` | اضافه کردن postgres، redis، migrations یا swagger به پروژهٔ موجود |
+| `run [command] [-- args]` | build و اجرای `serve` (یا دستور دیگر)، با ری‌استارت بعد از هر تغییر |
+| `route:list` | همهٔ routeها: متد، مسیر، handler، فایل:خط |
+| `swag` | ساخت دوبارهٔ `docs/` با swag پین‌شده — نیازی به نصب نیست |
+| `upgrade [version]` | پین کردن نسخهٔ دیگری از gortisan در پروژه |
+| `version`، `completion`، `help` | |
 
-## اسکریپت `./gortisan`
+`make feature user` (با فاصله) هم کار می‌کند. `--force` فایل‌هایی را که make می‌نویسد کامل بازنویسی می‌کند؛ بدون آن فایل‌های موجود دست نمی‌خورند.
 
-هر پروژه در ریشه‌اش `gortisan`، `gortisan.bat` و `gortisan.ps1` دارد، درست مثل `artisan`:
+داخل پروژه از اسکریپت `./gortisan` استفاده کنید (`gortisan.bat` یا `.\gortisan.ps1` در ویندوز). این اسکریپت با `go run` همان نسخه‌ای از gortisan را اجرا می‌کند که پروژه پین کرده؛ پس همه کد یکسان تولید می‌کنند و کسی لازم نیست gortisan را نصب کند.
+
+## featureها
 
 </div>
 
 ```bash
-./gortisan list                 # macOS / Linux / Git Bash
-gortisan.bat list               # cmd
-.\gortisan.ps1 list             # PowerShell
+./gortisan make:feature sales/order --fields "user_id:int64,amount:int64,paid_at:time?" --soft-delete
+./gortisan make:handler sales/order/create    # POST /api/sales/orders
+./gortisan make:handler sales/order/get       # GET  /api/sales/orders/:id
 ```
 
 <div dir="rtl">
 
-`artisan` در Goravel دستور `go run . artisan` را اجرا می‌کند، پس پروژه باید خود فریم‌ورک را import کند. اسکریپت gortisan دستور `go run github.com/alinemone/gortisan/cmd/gortisan@<version>` را اجرا می‌کند که روی همان نسخه‌ای که پروژه را ساخته پین شده است: همهٔ اعضای تیم کد یکسان تولید می‌کنند، کسی لازم نیست gortisan را نصب کند، و `go.mod` دست نمی‌خورد.
+نام action مسیر را تعیین می‌کند: `list` و `create` روی خود مجموعه، `get`، `update`، `patch` و `delete` روی `/:id`، و هر نام دیگری روی `/<action>` (`mark_paid` → `GET /mark-paid`). در `routes.go` آزادانه تغییرش دهید؛ `make:handler`های بعدی مسیر گروه را از همان‌جا می‌خوانند.
 
-## دستورها
+نوع فیلدها: `string`، `int`، `int32`، `int16`، `float`، `bool`، `time`، `json`. علامت `?` در انتها ستون را nullable می‌کند (در Go اشاره‌گر می‌شود).
 
-| دستور | کار |
-|---|---|
-| `create <name>` | پروژهٔ جدید در `./<name>` |
-| `run [command] [-- args]` | `cmd/api` (یا `cmd/<command>`) را build و اجرا می‌کند و با هر تغییر در فایل `.go`، `go.mod` یا `.env` ری‌استارت می‌کند؛ `--no-watch` یک بار اجرا می‌کند |
-| `make:model <subject>` | `user.go`، `errors.go`، `store.go` و `repository.go` در `internal/domain/<subject>` *(postgres)* |
-| `make:service <subject>` | `service.go`، ساخته‌شده روی `Store` اگر وجود داشته باشد |
-| `make:handler <version>/<subject>/<action>` | یک متد در `internal/api/<version>/<resources>/handler.go`، ورودی‌اش در `request.go` و خروجی‌اش در `response.go`؛ نسخهٔ جدید `routes.go` خودش را می‌گیرد |
-| `make:request <version>/<subject>/<name>` | یک نوع با `Validate` در `request.go` |
-| `make:response <version>/<subject>/<name>` | یک نوع در `response.go` |
-| `make:validator [<group>/]<name>` | `internal/api/validator/<group>/<name>.go`: یک ولیدیتور قابل استفادهٔ مجدد با `Passes` و `Validate`، و کلید پیامش در `internal/platform/trans/lang/fa.json` |
-| `make:enum <subject>/<name>` | فایل `<name>.go` در domain: ثابت‌ها، `String`، `Valid`، `Parse…` و فهرست مقادیر |
-| `make:cache <subject>/<name>` | یک cache تایپ‌شدهٔ Redis دور یک loader در `cache.go` همان domain *(redis)* |
-| `make:middleware <name>` | `internal/api/middleware/<name>.go` |
-| `make:client <name>` | `internal/platform/<name>/client.go`، کلاینت JSON برای یک سرویس دیگر |
-| `make:test <subject>` | `service_test.go`: تست سرویس با یک `Store` درون‌حافظه‌ای، بدون دیتابیس |
-| `make:test <version>/<subject>/<action>` | `<action>_test.go`: تست HTTP همان handler |
-| `add <postgres\|redis>` | بخشی را که پروژه بدون آن ساخته شده اضافه می‌کند: فایل‌ها، config، خط‌های `.env.example` و ماژول؛ دو خطی را که باید وصل کنید چاپ می‌کند |
-| `route:list` | همهٔ routeها: متد، مسیر، handler و فایل:خط؛ از `router.go` و `routes.go` هر نسخه خوانده می‌شود |
-| `list`، `help`، `version` | |
-
-موضوع‌ها می‌توانند گروه‌بندی شوند — `make:model sales/order` و `make:handler v1/sales/order/list`. `make handler` (با فاصله) همان `make:handler` است. راهنمایی که برای handler چاپ می‌شود مسیر REST را از اسم action حدس می‌زند: `list` ← `GET /users`، `get` ← `GET /users/:id`، `create` ← `POST /users`، `update` ← `PUT /users/:id`، `delete` ← `DELETE /users/:id`.
-
-**فلگ‌ها**
-
-| فلگ | دستور | معنی |
-|---|---|---|
-| `--module <path>` | `create` | مسیر ماژول Go، همان آرگومان دوم (پیش‌فرض: اسم پروژه) |
-| `--with <list>` | `create` | `postgres`، `redis`، `all` (پیش‌فرض) یا `none` |
-| `--no-tidy` | `create` | `go mod tidy` را اجرا نکن |
-| `--no-watch` | `run` | فقط یک بار اجرا کن |
-| `--fields "<list>"` | `make:model` | اختیاری: ستون‌ها، مثل `mobile:string,name:string` |
-| `--table <name>` | `make:model` | اسم جدول (پیش‌فرض: جمع اسم مدل) |
-| `--soft-delete` | `make:model` | ستون `deleted_at`؛ حذف آن را پر می‌کند و کوئری‌ها آن ردیف‌ها را نمی‌بینند |
-| `--members "<list>"` | `make:enum` | `pending,paid=5,sent`: اعداد از ۱ یا مقدار قبلی ادامه پیدا می‌کنند |
-| `--type <type>` | `make:enum` | `string` یا یک نوع عدد صحیح (پیش‌فرض `int64`) |
-| `--type <type>` | `make:cache` | نوع مقدار cache، مثل `int64` یا `*User` (پیش‌فرض `string`) |
-| `--force` | `make:*` | فایل‌های موجود را کامل بازنویسی کن |
-
-**نوع فیلدها** برای `--fields`: `string`/`text`، `int`/`int64`/`bigint`، `int32`/`integer`، `int16`، `float`/`float64`، `bool`، `time`، `json`/`jsonb`؛ یک `?` در انتها ستون را nullable می‌کند.
-
-## نسخه‌های API
-
-هر نسخه یک پکیج است: handlerها، requestها و responseهای خودش، با domain مشترک بین همهٔ نسخه‌ها. v1 کار می‌کند در حالی که v2 تغییر می‌کند.
+## migration
 
 </div>
 
-```go
-// internal/api/v1/routes.go — همهٔ endpointهای v1 در یک جا
-type Services struct {
-	User  *user.Service
-	Order *order.Service
-}
-
-func Register(g *echo.Group, s Services) {
-	userHandler := users.NewHandler(s.User)
-	g.GET("/users", userHandler.List)
-	g.GET("/users/:id", userHandler.Get)
-
-	orderHandler := orders.NewHandler(s.Order)
-	g.GET("/orders", orderHandler.List)
-}
-```
-
-```go
-// cmd/api/main.go — سیم‌کشی، جلوی چشم
-users := user.NewService(user.NewRepository(db))
-orders := order.NewService(order.NewRepository(db))
-
-api.Register(e, api.Routes{
-	Health: health.NewHandler(db, rdb),
-	V1:     v1.Services{User: users, Order: orders},
-	V2:     v2.Services{User: users},
-})
+```bash
+./gortisan make:migration add_index_to_users   # internal/migrations/<time>_add_index_to_users.sql
+go run . migrate up                            # همچنین: down (آخرین)، status
 ```
 
 <div dir="rtl">
 
-`./gortisan make:handler v2/user/list` بار اول `internal/api/v2/routes.go` را می‌سازد و خطی را که باید در `internal/api/router.go` اضافه کنید چاپ می‌کند. v2 فقط چیزهایی را دارد که عوض شده؛ تست معماری نمی‌گذارد v1 را import کند.
+هر migration یک فایل SQL با بخش Up و Down است که [goose](https://github.com/pressly/goose) اجرایش می‌کند:
+
+</div>
+
+```sql
+-- +goose Up
+CREATE INDEX users_mobile ON users (mobile);
+
+-- +goose Down
+DROP INDEX users_mobile;
+```
+
+<div dir="rtl">
+
+فایل‌ها داخل باینری embed می‌شوند. یک advisory lock در Postgres باعث می‌شود در هر لحظه فقط یک پروسه migrate کند. در production، اگر `RUN_MIGRATIONS=true` باشد، `deploy/entrypoint.sh` قبل از دستور اصلی `migrate up` را اجرا می‌کند. نسخه‌ها timestamp هستند، پس دو branch هیچ‌وقت شمارهٔ تکراری نمی‌سازند.
+
+## Swagger
+
+هر handlerی که `make:handler` می‌نویسد کامنت‌های swag دارد و `main.go` اطلاعات کلی API را. سند را دوباره بسازید و UI را باز کنید:
+
+</div>
+
+```bash
+./gortisan swag              # go run github.com/swaggo/swag/cmd/swag@<pinned> init
+open http://localhost:8000/swagger/index.html
+```
+
+<div dir="rtl">
+
+سرو کردنش با [echo-swagger](https://github.com/swaggo/echo-swagger) نسخهٔ v2 است که از echo v5 پشتیبانی می‌کند.
 
 ## لایهٔ دیتابیس
 
-PostgreSQL از طریق [bun](https://bun.uptrace.dev) روی درایور [pgx](https://github.com/jackc/pgx) استفاده می‌شود. مدل یک struct ساده با تگ‌های bun است — struct تنها جایی است که یک ستون تعریف می‌شود:
+اتصال به PostgreSQL با [bun](https://bun.uptrace.dev) روی [pgx](https://github.com/jackc/pgx) است. entity یک struct ساده با تگ‌های bun است:
 
 </div>
 
 ```go
-// internal/domain/user/user.go
+// internal/user/user.go
 type User struct {
 	bun.BaseModel `bun:"table:users"`
 
 	ID        int64      `bun:"id,pk,autoincrement" json:"id"`
 	Mobile    string     `bun:"mobile" json:"mobile"`
-	Name      string     `bun:"name" json:"name"`
-	Note      string     `bun:"-" json:"note"`                 // ستون نیست
 	CreatedAt time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 	DeletedAt *time.Time `bun:"deleted_at,soft_delete,nullzero" json:"deleted_at,omitempty"`
@@ -273,303 +245,91 @@ type User struct {
 
 <div dir="rtl">
 
-| تگ bun | معنی |
-|---|---|
-| `bun:"table:users"` روی `bun.BaseModel` | جدول |
-| `bun:"name"` | یک ستون |
-| `bun:"id,pk,autoincrement"` | کلید اصلی که دیتابیس پرش می‌کند |
-| `nullzero` | مقدار صفر به‌صورت `NULL` نوشته می‌شود تا مقدار پیش‌فرض ستون اعمال شود |
-| `soft_delete` | `Delete` به‌جای حذف سطر این ستون را پر می‌کند و selectها چنین سطرهایی را نادیده می‌گیرند |
-| `bun:"-"` | ستون نیست |
-| `rel:has-many,join:id=user_id` (و `has-one`، `belongs-to`، `m2m`) | یک رابطه که هر وقت بخواهید بارگذاری می‌شود |
-
-`make:model user --fields "mobile:string,name:string" --soft-delete` struct و repository را می‌نویسد. ساختن خود جدول با شماست ([جدول‌ها و migration](#جدول‌ها-و-migration))؛ برای اضافه کردن ستون، یک فیلد و همان ستون را اضافه کنید.
-
-`internal/platform/database/orm` لایه‌ای کوچک روی bun است که داخل پروژهٔ خودتان قرار دارد. فقط bun، pgx و کتابخانهٔ استاندارد را import می‌کند — هیچ‌وقت config یا domain شما را — و هیچ متغیر سراسری ندارد، پس می‌شود آن را بدون هیچ تغییری به یک ماژول جدا منتقل کرد:
-
-| فایل | محتوا |
-|---|---|
-| `orm.go` | مستندات پکیج |
-| `db.go` | `Options` (مقادیر ساده)، `Open` (pgx + bun، با ping)، `NewDB`، `IDB` |
-| `repository.go` | `Repository[T]`: `Find`، `First`، `Get`، `Count`، `Exists`، `Create`، `CreateMany`، `Update`، `Delete`، `ForceDelete`، `Restore`، `Select`، `DB`، `WithTx`؛ `created_at` و `updated_at` را پر می‌کند |
-| `query.go` | scopeها: `Where`، `WhereOr`، `WhereIn`، `OrderBy`، `Limit`، `Offset`، `Columns`، `WithTrashed`، `OnlyTrashed`، `ForUpdate` |
-| `relation.go` | `With(name, scopes...)`: بارگذاری یک رابطه، و رابطه‌های تودرتو با نقطه |
-| `pagination.go` | `Paginate` و `Page[T]` (`Total`، `Pages`، `HasNext`)، `ForPage` |
-| `tx.go` | `InTx` و `InTxOptions`: تراکنش صریح (و savepoint وقتی تودرتو باشد) |
-| `errors.go` | `ErrNotFound` (برای `sql.ErrNoRows` هم)، `IsNotFound`، `MapNotFound` |
-
-تست‌های آن بدون دیتابیس SQL می‌سازند؛ اگر `ORM_TEST_DSN` را تنظیم کنید، همهٔ عملیات را روی PostgreSQL در یک schema موقت هم اجرا می‌کنند.
-
-`Service` به `Store` وابسته است، یک interface در `store.go` که `Repository` پیاده‌اش می‌کند — پس تست سرویس می‌تواند یک store جعلی بدهد و بدون دیتابیس اجرا شود. repository خطای `ErrNotFound` خود domain را برمی‌گرداند، نه خطای orm را؛ پس هیچ چیز بالای آن به ذخیره‌سازی وابسته نیست:
-
-</div>
-
-```go
-// internal/domain/user/repository.go
-type Repository struct {
-	rows *orm.Repository[User]
-}
-
-func NewRepository(db orm.IDB) *Repository {
-	return &Repository{rows: orm.NewRepository[User](db)}
-}
-
-func (r *Repository) Find(ctx context.Context, id int64) (*User, error) {
-	m, err := r.rows.Find(ctx, id)
-	return m, orm.MapNotFound(err, ErrNotFound)
-}
-
-func (r *Repository) Search(ctx context.Context, name string, page int) (orm.Page[User], error) {
-	return r.rows.Paginate(ctx, page, 20,
-		orm.Where("?TableAlias.name ILIKE ?", "%"+name+"%"),
-		orm.OrderBy("?TableAlias.id DESC"))
-}
-```
-
-<div dir="rtl">
-
-هر کوئری‌ای که repository متدی برایش ندارد، bun ساده روی همان اتصال است: `r.rows.Select(&dest).ColumnExpr(...).Group(...).Scan(ctx)` یا `r.rows.DB().NewRaw("SELECT ...", args...).Scan(ctx, &dest)`.
-
-### رابطه‌ها: آیتم‌های فاکتور با وضعیت‌هایشان
-
-</div>
-
-```go
-// internal/domain/invoice/invoice.go
-type Invoice struct {
-	bun.BaseModel `bun:"table:invoices"`
-	ID     int64        `bun:"id,pk,autoincrement" json:"id"`
-	Number string       `bun:"number" json:"number"`
-	Items  []*item.Item `bun:"rel:has-many,join:id=invoice_id" json:"items,omitempty"`
-}
-
-// internal/domain/invoice/item/item.go
-type Item struct {
-	bun.BaseModel `bun:"table:invoice_items"`
-	ID        int64            `bun:"id,pk,autoincrement" json:"id"`
-	InvoiceID int64            `bun:"invoice_id" json:"invoice_id"`
-	Title     string           `bun:"title" json:"title"`
-	Statuses  []*status.Status `bun:"rel:has-many,join:id=item_id" json:"statuses,omitempty"`
-}
-
-// internal/domain/invoice/item/status/status.go
-type Status struct {
-	bun.BaseModel `bun:"table:item_statuses"`
-	ID     int64  `bun:"id,pk,autoincrement" json:"id"`
-	ItemID int64  `bun:"item_id" json:"item_id"`
-	Name   string `bun:"name" json:"name"`
-}
-
-// internal/domain/invoice/repository.go: فاکتور، آیتم‌هایش، و وضعیت‌های هر آیتم
-func (r *Repository) FindWithItems(ctx context.Context, id int64) (*Invoice, error) {
-	m, err := r.rows.Find(ctx, id,
-		orm.With("Items", orm.OrderBy("?TableAlias.id")),
-		orm.With("Items.Statuses", orm.OrderBy("?TableAlias.id")),
-	)
-	return m, orm.MapNotFound(err, ErrNotFound)
-}
-```
-
-<div dir="rtl">
-
-این کار سه کوئری اجرا می‌کند — فاکتور، آیتم‌هایش و وضعیت‌هایشان — نه یک کوئری برای هر سطر. `make:model invoice`، `make:model invoice/item --table invoice_items` و `make:model invoice/item/status --table item_statuses` سه پکیج را می‌نویسند؛ فیلدهای رابطه را دستی اضافه می‌کنید.
-
-### تراکنش‌ها
-
-تراکنش یک مقدار است و صریح پاس داده می‌شود؛ repositoryهایی که با `WithTx` روی آن ساخته شوند کوئری‌هایشان را داخل آن اجرا می‌کنند:
+`internal/platform/orm` لایه‌ای کوچک روی bun است که داخل پروژهٔ خودتان قرار دارد و فقط bun، pgx و کتابخانهٔ استاندارد را import می‌کند: `Repository[T]` (`Find`، `Get`، `First`، `Count`، `Exists`، `Paginate`، `Create`، `Update`، `Delete`، `ForceDelete`، `Restore`)، scopeها (`Where`، `OrderBy`، `Limit`، `WithTrashed`، `ForUpdate` و …)، relationها (`With("Items.Statuses")`)، صفحه‌بندی و تراکنش صریح:
 
 </div>
 
 ```go
 err := orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error {
-	if err := invoices.WithTx(tx).Create(ctx, inv); err != nil {
+	if err := orders.WithTx(tx).Create(ctx, o); err != nil {
 		return err // rollback
 	}
 	return payments.WithTx(tx).Create(ctx, p) // nil یعنی commit
 })
 ```
 
-
 <div dir="rtl">
 
-## جدول‌ها و migration
-
-gortisan جدول نمی‌سازد و اجراکنندهٔ migration یا seeder هم تولید نمی‌کند. `make:model` سمت Go را می‌نویسد — struct با تگ‌های bun و repository — و schema با شماست: جدول‌ها را دستی بسازید یا با ابزار migration دلخواهتان ([goose](https://github.com/pressly/goose)، [golang-migrate](https://github.com/golang-migrate/migrate)، [Atlas](https://atlasgo.io) و …). اگر ابزارتان دستور جدا لازم دارد، می‌تواند در `cmd/migrate` باشد؛ `./gortisan run` پوشه‌های `cmd/migrate`، `cmd/seed` و `cmd/worker` را اجرا نمی‌کند مگر اینکه نامشان را بدهید.
+سرویس به interface `Repository` خودش وابسته است، پس `service_test.go` با یک نسخهٔ جعلی و بدون دیتابیس اجرا می‌شود. `postgres.go` همیشه `ErrNotFound` خود feature را برمی‌گرداند، نه خطای orm را.
 
 ## اعتبارسنجی و خطاها
 
-ولیدیتور یک نوع کوچک در `internal/api/validator/<group>/` است که همهٔ نسخه‌های API از آن استفاده می‌کنند، مثل ولیدیتورهای سلام‌گیت. `make:validator address/mobile` آن را می‌سازد و شما فقط `Passes` را می‌نویسید:
+هر request بعد از bind خودش را اعتبارسنجی می‌کند و همهٔ فیلدهای نامعتبر را با هم در یک 422 گزارش می‌دهد:
 
 </div>
 
 ```go
-// internal/api/validator/address/mobile.go
-type Mobile struct {
-	validate.Base // Location، Code (کلید پیام)، Status (صفر یعنی 422)
-	value string
-}
-
-func NewMobile(location, value string) *Mobile {
-	return &Mobile{Base: validate.Base{Location: location, Code: "address:mobile"}, value: value}
-}
-
-func (v *Mobile) Passes(ctx context.Context) (bool, error) {
-	return mobileRE.MatchString(v.value), nil // error یعنی خود بررسی نتوانست اجرا شود
-}
-
-func (v *Mobile) Validate(ctx context.Context) error { return validate.Run(ctx, v) }
-```
-
-<div dir="rtl">
-
-به دو شکل استفاده می‌شود:
-
-</div>
-
-```go
-// با اولین خطا متوقف شو، با status خود ولیدیتور (مثل .validate() در سلام‌گیت):
-if err := address.NewMobile("body.mobile", r.Mobile).Validate(ctx); err != nil {
-	return err
-}
-
-// یا همهٔ فیلدهای نامعتبر را با هم، در یک 422، برگردان:
-var errs validate.Errors
-if err := errs.Check(ctx, address.NewMobile("body.mobile", r.Mobile)); err != nil {
-	return err
-}
-if r.Age < 18 {
-	errs.Add("body.age", "general:min", "سن", 18)
-}
-return errs.Err()
-```
-
-<div dir="rtl">
-
-location یکی از این‌هاست: `body.<field>` (یا فقط `<field>`)، `body.items.0.quantity`، `query.<name>`، `path.<name>` یا `header.<name>`. اگر ولیدیتوری باید با status دیگری خطا بدهد، خودش تنظیمش می‌کند: `v.Status = http.StatusNotFound`.
-
-### بدنهٔ خطا: RFC 9457
-
-هر خطا، چه اعتبارسنجی، چه `echo.NewHTTPError`، چه مسیر ناموجود و چه 500، به شکل [problem details](https://www.rfc-editor.org/rfc/rfc9457) و با `Content-Type: application/problem+json` نوشته می‌شود:
-
-</div>
-
-```json
-422 {"type": "about:blank", "title": "Unprocessable Entity", "status": 422,
-     "detail": "داده‌های ارسال‌شده معتبر نیستند.",
-     "errors": [{"pointer": "#/mobile", "code": "address:mobile", "detail": "شماره موبایل معتبر نیست."},
-                {"pointer": "#/items/1/quantity", "code": "general:field-required", "detail": "تعداد اجباری است."}]}
-404 {"type": "about:blank", "title": "Not Found", "status": 404, "detail": "کاربر مورد نظر یافت نشد."}
-500 {"type": "about:blank", "title": "Internal Server Error", "status": 500}
-```
-
-<div dir="rtl">
-
-`pointer` یک JSON Pointer به داخل body است؛ برای مقدارهای path، query و header از `parameter` استفاده می‌شود. `code` کلید پیام است و ثابت می‌ماند، پس فرانت می‌تواند بر اساس آن تصمیم بگیرد.
-
-### ترجمه
-
-همهٔ متن‌هایی که API نشان می‌دهد در `internal/platform/trans/lang/fa.json` هستند، با کلید و با `%s` برای آرگومان‌ها، و داخل باینری embed می‌شوند:
-
-</div>
-
-```json
-{
-  "general:entity-not-found": "%s مورد نظر یافت نشد.",
-  "address:mobile": "شماره موبایل معتبر نیست."
-}
-```
-
-```go
-trans.Message("general:entity-not-found", "سفارش") // "سفارش مورد نظر یافت نشد."
-```
-
-<div dir="rtl">
-
-کلیدی که در فایل نباشد همان‌طور که هست برمی‌گردد. ولی اگر کد از کلیدی استفاده کند (`trans.Message("…")` یا `validate.Base{Code: "…"}`) که در `fa.json` نیست، تست `internal/platform/trans` خطا می‌دهد و فایل و خط آن را نشان می‌دهد.
-
-domain خطاها را به زبان کسب‌وکار برمی‌گرداند (`errors.go`)؛ handler تصمیم می‌گیرد کد HTTP چه باشد:
-
-</div>
-
-```go
-u, err := h.service.Find(ctx, req.ID)
-if errors.Is(err, user.ErrNotFound) {
-	return echo.NewHTTPError(http.StatusNotFound, trans.Message("general:entity-not-found", "کاربر"))
-}
-if err != nil {
-	return err // یک 500؛ جزئیاتش به لاگ می‌رود، نه به کلاینت
-}
-```
-
-<div dir="rtl">
-
-هر درخواست یک خط لاگ JSON با method، مسیر، status و مدت زمان می‌نویسد؛ خطاهای 5xx همراه علتشان لاگ می‌شوند و panic همراه stack.
-
-سرور یک `http.Server` ساده است با `ReadHeaderTimeout`، `ReadTimeout`، `WriteTimeout`، `IdleTimeout` و `MaxHeaderBytes` (با `HTTP_*` در `.env`)، پس یک کلاینت کند یا بیکار نمی‌تواند اتصال‌ها را باز نگه دارد. بازیابی از panic چند خط در `internal/platform/server` است، نه یک کتابخانه.
-
-## اضافه کردن auth، Sentry و…
-
-gortisan عمداً این‌ها را تولید نمی‌کند: هر شرکت آن‌ها را جور دیگری انجام می‌دهد و نسخهٔ تولیدشده مجبور می‌شد کتابخانه‌ای را به‌جای شما انتخاب کند. هر کدام چند خط است، دستی اضافه می‌شود و صریح می‌ماند:
-
-</div>
-
-```bash
-./gortisan make:middleware authenticate
-```
-
-```go
-// internal/api/middleware/authenticate.go
-func Authenticate(tokens *auth.Client) echo.MiddlewareFunc { // SDK احراز هویت خودتان
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c *echo.Context) error {
-			who, err := tokens.Verify(c.Request().Context(), c.Request().Header.Get("Authorization"))
-			if err != nil {
-				return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-			}
-			c.Set("caller", who) // یا صریح پاسش دهید
-			return next(c)
-		}
+func (r *CreateRequest) Validate(ctx context.Context) error {
+	var errs validate.Errors
+	if err := errs.Check(ctx, address.NewMobile("body.mobile", r.Mobile)); err != nil {
+		return err
 	}
+	if r.Amount <= 0 {
+		errs.Add("body.amount", "general:min", "مبلغ", 1)
+	}
+	return errs.Err()
 }
-
-// internal/api/v1/routes.go
-g.Use(middleware.Authenticate(s.Tokens))
 ```
 
 <div dir="rtl">
 
-گزارش خطا (Sentry و مشابهش) هم همین‌طور: یک middleware که به `server.New(logger, sentryMiddleware)` داده می‌شود، یا یک فراخوانی در error handler پکیج `server`.
+`make:validator address/mobile` یک بررسی قابل استفادهٔ مجدد در `internal/server/validator/address/` می‌سازد و شما فقط `Passes` آن را می‌نویسید.
 
-## بدون مجیک: قانون‌ها
+هر خطا — اعتبارسنجی، `echo.NewHTTPError`، route ناموجود یا 500 — را `internal/server` به‌صورت problem details طبق [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) (`application/problem+json`) می‌نویسد. متن‌ها کلیدهای `internal/platform/trans/lang/fa.json` هستند و اگر کد از کلیدی استفاده کند که در فایل نیست، تست رد می‌شود. feature خطاها را با زبان کسب‌وکار برمی‌گرداند و handler status را انتخاب می‌کند.
 
-1. **هیچ importی از تولیدکننده نیست.** فقط پکیج‌های خود پروژه و کتابخانه‌هایی که انتخاب کرده‌اید. تست‌های gortisan این را در هر build بررسی می‌کنند.
-2. **وابستگی‌ها پاس داده می‌شوند، جست‌وجو نمی‌شوند.** constructorها چیزی را که لازم دارند می‌گیرند و `main.go` آن‌ها را به هم وصل می‌کند؛ هیچ چیز در `context.Context` ذخیره یا از آن خوانده نمی‌شود.
-3. **لایه‌ها یک‌طرفه‌اند:** `api` و `worker` ← `domain` ← `platform`. `tests/arch_test.go` این را در هر پروژه اجبار می‌کند.
-4. **کد خوانا به‌جای سازوکار پنهان.** config هر متغیر را با اسمش می‌خواند. دیتابیس از bun، یک کتابخانهٔ شناخته‌شده، استفاده می‌کند و پکیج نازک `orm` روی آن داخل مخزن خودتان است تا بخوانید و تغییرش دهید.
-5. **تراکنش‌ها مقدارند** — `tx` در `orm.InTx` که به `repo.WithTx(tx)` داده می‌شود — و **خطاها معنی دارند**: domain اسمشان را می‌گذارد و API آن‌ها را به status تبدیل می‌کند.
+## دستورهای بیشتر: worker و schedule
 
-## وابستگی‌ها
+هر پروسهٔ جدید یک دستور Cobra جدید است، کنار `serve`:
 
-پروژهٔ تولیدشده به **echo v5** وابسته است و اگر انتخابشان کنید به **bun روی pgx** (PostgreSQL) و **go-redis**. هیچ چیز دیگر: Kafka، متریک، گزارش خطا (Sentry…)، tracing (OpenTelemetry…)، دیتابیس‌ها یا صف‌های دیگر را هر وقت لازم داشتید خودتان اضافه کنید — یک middleware، یک کلاینت در `platform/`، یک خط در `main.go`. یک starter kit که SDKهای دیگران را پین کند، با تغییر آن‌ها می‌شکند.
+</div>
 
-## هنوز پشتیبانی نمی‌شود
+```
+cmd/worker.go          shop worker    → internal/app/worker.go (consumerها را می‌سازد)
+cmd/schedule.go        shop schedule  → internal/app/schedule.go
+internal/order/consumer.go            consumer هم مثل handler فقط order.Service را صدا می‌زند
+```
 
-- مستندات OpenAPI / Swagger
+<div dir="rtl">
+
+به‌اضافهٔ یک خط در `cmd/root.go`. یک image همهٔ نقش‌ها را اجرا می‌کند: `serve`، `worker` یا `schedule` به‌عنوان دستور.
+
+## نسخه‌ها و به‌روزرسانی
+
+هر پروژه نسخهٔ gortisan را در `./gortisan` پین می‌کند و ساختارش را در `.gortisan.json` ثبت می‌کند. از `v1.0.0` به بعد، هر نسخه از همان major پروژه‌های موجود را سالم نگه می‌دارد و `./gortisan upgrade` پروژه را به جدیدترین نسخه می‌برد. تعهد کامل در [COMPATIBILITY.fa.md](COMPATIBILITY.fa.md) آمده است.
+
+## بدون جادو: قواعد
+
+1. **generator import نمی‌شود.** فقط پکیج‌های خود پروژه و کتابخانه‌هایی که انتخاب کرده‌اید. تست‌های gortisan این را در هر build چک می‌کنند.
+2. **وابستگی‌ها پاس داده می‌شوند، نه جست‌وجو.** constructorها هرچه لازم دارند می‌گیرند و `internal/app` آن‌ها را می‌سازد. هیچ چیزی از context یا registry بیرون کشیده نمی‌شود.
+3. **featureها از هم جدا می‌مانند.** هیچ featureی feature دیگری را import نمی‌کند و کد مشترک هم هیچ featureی را. `tests/arch_test.go` این را اجبار می‌کند.
+4. **کد خوانا به‌جای سازوکار پنهان.** config هر متغیر را با اسمش می‌خواند. دیتابیس از bun استفاده می‌کند و `orm` نازک روی آن داخل ریپوی خودتان است.
+5. **خطاها معنا دارند:** feature آن‌ها را نام‌گذاری می‌کند، handler به status تبدیلشان می‌کند و `internal/server` آن‌ها را می‌نویسد.
+
+پروژهٔ تولیدشده به echo v5 و Cobra وابسته است، به‌اضافهٔ هرچه انتخاب کنید: bun و pgx، go-redis، goose، echo-swagger. Kafka، metrics، Sentry یا tracing را خودتان اضافه می‌کنید — یک client در `platform/`، یک middleware، یک خط در `internal/app`.
 
 ## توسعه
 
 </div>
 
 ```bash
-go test ./...          # برای هر انتخاب --with یک پروژه می‌سازد، همهٔ make:*ها را اجرا می‌کند،
-                       # بعد go mod tidy، go vet و go test (ماژول‌ها را دانلود می‌کند)
+go test ./...          # برای چند ترکیب --with پروژه می‌سازد، همهٔ make:*ها را اجرا می‌کند،
+                       # بعد go mod tidy، go vet و go test می‌گیرد (ماژول دانلود می‌کند)،
+                       # و همین کار را روی fixtureهای سازگاری انجام می‌دهد
 go test -short ./...   # فقط تست‌های واحد
 ```
 
 <div dir="rtl">
 
-قالب‌ها در `internal/generator/templates` هستند و داخل باینری embed می‌شوند. CI کل تست‌ها را برای هر push و pull request روی Linux و Windows اجرا می‌کند.
-
-انتشار نسخه با تگ git است: `git tag -a v0.0.7 -m v0.0.7 && git push origin v0.0.7`.
+قالب‌ها در `internal/generator/templates` هستند و داخل باینری embed می‌شوند. هر release یک تگ git است: `git tag -a v0.1.0 -m v0.1.0 && git push origin v0.1.0`.
 
 </div>

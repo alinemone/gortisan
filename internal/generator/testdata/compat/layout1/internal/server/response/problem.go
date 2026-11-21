@@ -1,0 +1,40 @@
+// Package response is the body of every error response: RFC 9457 problem
+// details, sent as application/problem+json.
+//
+//	{"type": "about:blank", "title": "Unprocessable Content", "status": 422,
+//	 "detail": "...", "errors": [{"pointer": "#/mobile", "code": "address:invalid-mobile", "detail": "..."}]}
+package response
+
+import "net/http"
+
+// ContentType is the media type of a problem details body.
+const ContentType = "application/problem+json"
+
+// Details is a problem details body (RFC 9457, section 3).
+type Details struct {
+	// Type is "about:blank": the status code says what went wrong.
+	Type string `json:"type"`
+	// Title is the status text, e.g. "Not Found".
+	Title  string `json:"title"`
+	Status int    `json:"status"`
+	// Detail explains this occurrence to the client.
+	Detail string `json:"detail,omitempty"`
+	// Errors lists every invalid input of a request.
+	Errors []Error `json:"errors,omitempty"`
+}
+
+// Error is one invalid input: a JSON Pointer into the request body
+// ("#/items/0/quantity") or the name of a path, query or header parameter.
+type Error struct {
+	Pointer   string `json:"pointer,omitempty"`
+	Parameter string `json:"parameter,omitempty"`
+	// Code is the key of the message in trans/lang/fa.json, stable for clients to
+	// match on, e.g. "address:invalid-mobile".
+	Code   string `json:"code,omitempty"`
+	Detail string `json:"detail"`
+}
+
+// New returns the body of an error with status; detail may be empty.
+func New(status int, detail string) Details {
+	return Details{Type: "about:blank", Title: http.StatusText(status), Status: status, Detail: detail}
+}

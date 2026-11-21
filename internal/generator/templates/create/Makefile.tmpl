@@ -1,10 +1,10 @@
-.PHONY: run build test vet tidy
+.PHONY: run build test vet tidy{{if .Swagger}} swag{{end}}{{if .Migrations}} migrate{{end}}
 
 run:
-	go run ./cmd/api
+	go run . serve
 
 build:
-	go build -o bin/{{.Name}} ./cmd/api
+	go build -o bin/{{.Name}} .
 
 test:
 	go test ./...
@@ -14,3 +14,14 @@ vet:
 
 tidy:
 	go mod tidy
+{{- if .Swagger}}
+
+# Regenerates docs/ from the swag comments on main.go and the handlers.
+swag:
+	go run github.com/swaggo/swag/cmd/swag@{{.SwagVersion}} init
+{{- end}}
+{{- if .Migrations}}
+
+migrate:
+	go run . migrate up
+{{- end}}

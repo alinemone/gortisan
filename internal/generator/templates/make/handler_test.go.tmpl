@@ -6,30 +6,25 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v5"
-{{- if .HasService}}
-
-	"{{.DomainImport}}"
-{{- end}}
 )
-{{- if .HasService}}
 
-// {{.Var}}{{.Action}}Store stands in for the database. It embeds the Store
-// interface: implement the methods {{.Action}} uses, the others panic.
-type {{.Var}}{{.Action}}Store struct {
-	{{.DomainPkg}}.Store
+// {{.Var}}Repository stands in for the database in the test of {{.Action}}.
+// It embeds Repository: implement the methods {{.Action}} uses, the others
+// panic.
+type {{.Var}}Repository struct {
+	Repository
 }
-{{- end}}
 
-func Test{{.Action}}(t *testing.T) {
-	h := NewHandler({{if .HasService}}{{.DomainPkg}}.NewService({{.Var}}{{.Action}}Store{}){{end}})
+func TestHandler{{.Action}}(t *testing.T) {
+	h := NewHandler(NewService({{.Var}}Repository{}))
 	e := echo.New()
-	e.Add("{{.Method}}", "{{.Path}}", h.{{.Action}})
+	RegisterRoutes(e.Group(""), h)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest("{{.Method}}", "{{.TestURL}}", nil))
 
 	// Assert the status and body you expect once {{.Action}} is implemented.
-	if rec.Code == http.StatusInternalServerError {
+	if rec.Code == http.StatusInternalServerError || rec.Code == http.StatusNotFound {
 		t.Fatalf("{{.Method}} {{.TestURL}} = %d %s", rec.Code, rec.Body.String())
 	}
 }

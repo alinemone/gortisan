@@ -78,3 +78,17 @@ func TestSnapshotSeesSourceChangesOnly(t *testing.T) {
 		t.Fatal("an edited .go file must restart")
 	}
 }
+
+func TestHasRootCommand(t *testing.T) {
+	root := t.TempDir()
+	if HasRootCommand(root) {
+		t.Fatal("no main.go: want false")
+	}
+	write(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() {}\n")
+	if !HasRootCommand(root) {
+		t.Fatal("a main package in the root: want true")
+	}
+	if got := (Options{Target: ".", Args: []string{"serve"}}).label(); got != "go run . serve" {
+		t.Fatalf("label = %q", got)
+	}
+}

@@ -1,0 +1,12 @@
+package {{.Pkg}}
+
+// Handler serves the {{.Words}} endpoints, mounted in routes.go. A handler
+// binds and validates its request (dto.go), calls the service and writes a
+// response; `./gortisan make:handler {{.Feature}}/<action>` adds one.
+type Handler struct {
+	service *Service
+}
+
+func NewHandler(service *Service) *Handler {
+	return &Handler{service: service}
+}

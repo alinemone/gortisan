@@ -1,0 +1,81 @@
+// Package app builds the service from its parts and runs it: config ->
+// connections -> features -> routes. It is the only package that knows the
+// concrete types; everything else receives what it needs through its
+// constructor. Nothing is looked up from a context or a registry.
+package app
+
+import (
+	"context"
+	"log/slog"
+	"os"
+
+	"github.com/labstack/echo/v5"
+{{- if .Redis}}
+	"github.com/redis/go-redis/v9"
+{{- end}}
+{{- if .Swagger}}
+	echoSwagger "github.com/swaggo/echo-swagger/v2"
+{{- end}}
+{{- if .Postgres}}
+	"github.com/uptrace/bun"
+{{- end}}
+
+	"{{.Module}}/internal/config"
+{{- if or .Postgres .Redis}}
+	"{{.Module}}/internal/platform"
+{{- end}}
+	"{{.Module}}/internal/server"
+{{- if .Swagger}}
+
+	_ "{{.Module}}/docs" // the Swagger document, written by swag
+{{- end}}
+)
+
+// Serve opens the connections, builds every feature and serves HTTP on
+// cfg.HTTP.Port until ctx is done.
+func Serve(ctx context.Context, cfg config.Config) error {
+	logger := newLogger(cfg.Debug)
+	slog.SetDefault(logger)
+{{if .Postgres}}
+	db, err := platform.OpenPostgres(ctx, cfg.Postgres)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+{{end}}
+{{- if .Redis}}
+	rdb, err := platform.OpenRedis(ctx, cfg.Redis)
+	if err != nil {
+		return err
+	}
+	defer rdb.Close()
+{{end}}
+	e := server.New(logger)
+	server.NewHealth({{if .Postgres}}db{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}rdb{{end}}).Register(e)
+{{- if .Swagger}}
+	e.GET("/swagger/*", echoSwagger.WrapHandler)
+{{- end}}
+	features(e.Group(cfg.HTTP.BasePath){{if .Postgres}}, db{{end}}{{if .Redis}}, rdb{{end}})
+
+	logger.Info("listening", "addr", ":"+cfg.HTTP.Port, "base_path", cfg.HTTP.BasePath)
+	return server.Run(ctx, e, cfg.HTTP)
+}
+
+// features builds every feature, bottom up, and mounts its routes on api,
+// the BASE_PATH group. `./gortisan make:feature` adds the lines, e.g.
+//
+//	userService := user.NewService(user.NewPostgres(db))
+//	user.RegisterRoutes(api, user.NewHandler(userService))
+//
+// A feature that needs another gets it through a small interface it declares
+// itself; this function is the only place both are known.
+func features(api *echo.Group{{if .Postgres}}, db *bun.DB{{end}}{{if .Redis}}, rdb *redis.Client{{end}}) {
+}
+
+func newLogger(debug bool) *slog.Logger {
+	level := slog.LevelInfo
+	if debug {
+		level = slog.LevelDebug
+	}
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+}

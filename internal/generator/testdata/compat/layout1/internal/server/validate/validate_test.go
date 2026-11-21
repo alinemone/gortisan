@@ -1,0 +1,106 @@
+package validate
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"testing"
+
+	"example.com/compat/internal/server/response"
+)
+
+// positive is a validator, written the way make:validator writes them.
+type positive struct {
+	Base
+	value int
+	err   error
+}
+
+func newPositive(location string, value int) *positive {
+	return &positive{Base: Base{Location: location, Code: "general:min"}, value: value}
+}
+
+func (v *positive) Passes(context.Context) (bool, error) { return v.value > 0, v.err }
+func (v *positive) Message() string                      { return "must be positive" }
+
+func TestRun(t *testing.T) {
+	ctx := context.Background()
+	if err := Run(ctx, newPositive("body.quantity", 1)); err != nil {
+		t.Fatalf("a passing check: %v", err)
+	}
+
+	var verr *Error
+	if err := Run(ctx, newPositive("body.items.0.quantity", 0)); !errors.As(err, &verr) {
+		t.Fatalf("want an *Error, got %v", err)
+	}
+	want := response.Error{Pointer: "#/items/0/quantity", Code: "general:min", Detail: "must be positive"}
+	if verr.StatusCode() != http.StatusUnprocessableEntity || len(verr.Fields) != 1 || verr.Fields[0] != want {
+		t.Fatalf("got %d %+v", verr.StatusCode(), verr.Fields)
+	}
+
+	notFound := newPositive("path.id", 0)
+	notFound.Status = http.StatusNotFound
+	if err := Run(ctx, notFound); !errors.As(err, &verr) || verr.StatusCode() != http.StatusNotFound {
+		t.Fatalf("want a 404, got %v", err)
+	}
+	body := verr.ResponseBody().(response.Details)
+	if body.Detail != "must be positive" || body.Errors[0].Parameter != "id" {
+		t.Fatalf("a 404 body: %+v", body)
+	}
+
+	boom := errors.New("database is down")
+	failing := newPositive("body.x", 0)
+	failing.err = boom
+	if err := Run(ctx, failing); !errors.Is(err, boom) {
+		t.Fatalf("a check that could not run: %v", err)
+	}
+}
+
+func TestErrors(t *testing.T) {
+	ctx := context.Background()
+	var errs Errors
+	if errs.Err() != nil {
+		t.Fatal("no errors must give a nil error")
+	}
+
+	errs.Add("query.page", "general:min", "صفحه", 1)
+	if err := errs.Check(ctx, newPositive("quantity", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := errs.Check(ctx, newPositive("body.count", 3)); err != nil {
+		t.Fatal(err)
+	}
+
+	var verr *Error
+	if !errors.As(errs.Err(), &verr) || verr.StatusCode() != http.StatusUnprocessableEntity {
+		t.Fatalf("want a 422 *Error, got %v", errs.Err())
+	}
+	body := verr.ResponseBody().(response.Details)
+	want := []response.Error{
+		{Parameter: "page", Code: "general:min", Detail: "صفحه نباید کمتر از 1 باشد."},
+		{Pointer: "#/quantity", Code: "general:min", Detail: "must be positive"},
+	}
+	if body.Status != 422 || body.Type != "about:blank" || len(body.Errors) != 2 || body.Errors[0] != want[0] || body.Errors[1] != want[1] {
+		t.Fatalf("body = %+v", body)
+	}
+
+	failing := newPositive("body.x", 0)
+	failing.err = errors.New("database is down")
+	var other Errors
+	if err := other.Check(ctx, failing); err == nil || !other.Empty() {
+		t.Fatal("a check that could not run must return its error and record nothing")
+	}
+}
+
+func TestPointer(t *testing.T) {
+	for location, want := range map[string]string{
+		"body":         "#",
+		"body.a.b":     "#/a/b",
+		"mobile":       "#/mobile",
+		"body.a/b.c~d": "#/a~1b/c~0d",
+	} {
+		if got := field(location, "", "").Pointer; got != want {
+			t.Errorf("%q: pointer %q, want %q", location, got, want)
+		}
+	}
+}

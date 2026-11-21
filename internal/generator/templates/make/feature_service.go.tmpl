@@ -1,0 +1,32 @@
+package {{.Pkg}}
+
+import "context"
+
+// Repository is what Service needs from storage. It is declared here, by the
+// code that uses it;{{if .Postgres}} Postgres (postgres.go) implements it, and{{end}} a test can give
+// Service a fake one and run without a database. Add a method when the
+// service needs a new query.
+type Repository interface {
+	Find(ctx context.Context, id int64) (*{{.Type}}, error)
+	List(ctx context.Context, limit, offset int) ([]*{{.Type}}, error)
+	Create(ctx context.Context, m *{{.Type}}) error
+	Update(ctx context.Context, m *{{.Type}}, columns ...string) error
+	Delete(ctx context.Context, id int64) error
+}
+
+// Service holds the {{.Words}} use cases: the one entry point for the
+// handlers, workers and other features. Methods take a context first and
+// return the errors of {{.Pkg}}.go; the caller decides what an error means to
+// its client.
+type Service struct {
+	repo Repository
+}
+
+func NewService(repo Repository) *Service {
+	return &Service{repo: repo}
+}
+
+// Find returns ErrNotFound when there is no such {{.Words}}.
+func (s *Service) Find(ctx context.Context, id int64) (*{{.Type}}, error) {
+	return s.repo.Find(ctx, id)
+}

@@ -2,10 +2,14 @@ package generator
 
 import (
 	"bytes"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"io/fs"
+	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -15,9 +19,9 @@ import (
 // Route is one endpoint found in the project's route files.
 type Route struct {
 	Method  string // GET
-	Path    string // /v1/users/:id
-	Handler string // v1/users.Handler.Get
-	File    string // internal/api/v1/routes.go:31
+	Path    string // /api/users/:id
+	Handler string // user.Handler.Get
+	File    string // internal/user/routes.go:12
 }
 
 var routeMethods = map[string]bool{
@@ -25,71 +29,69 @@ var routeMethods = map[string]bool{
 	"HEAD": true, "OPTIONS": true, "CONNECT": true, "TRACE": true, "Any": true,
 }
 
-// Routes reads internal/api/router.go and the Register function of every
-// package it mounts (internal/api/v1/routes.go, ...) and lists the routes
-// they register. It reads the source, it does not run it, so routes added
-// in other ways (a loop, a helper) are not seen.
+// Routes lists the endpoints of the project, read from the source: /ping and
+// /health (internal/server/health.go), what internal/app/serve.go mounts on e
+// (/swagger/*), and the RegisterRoutes function of every feature's routes.go,
+// whose paths are under the project's BASE_PATH. It reads the source, it does
+// not run it, so routes added in other ways (a loop, a helper) are not seen.
 func Routes(p *Project) ([]Route, error) {
-	router := filepath.Join(p.Root, "internal", "api", "router.go")
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, router, nil, parser.SkipObjectResolution)
+	if err := p.Check(); err != nil {
+		return nil, err
+	}
+	var routes []Route
+	for _, f := range []struct{ file, fn, receiver string }{
+		{"internal/server/health.go", "Register", "server.Health"},
+		{appServe, "Serve", ""},
+	} {
+		found, err := fileRoutes(p, f.file, f.fn, "", f.receiver)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		routes = append(routes, found...)
+	}
+
+	var files []string
+	err := filepath.WalkDir(filepath.Join(p.Root, "internal"), func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && d.Name() == "routes.go" {
+			files = append(files, path)
+		}
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	imports := importNames(file)
-
-	var routes []Route
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
-			continue
+	slices.Sort(files)
+	for _, file := range files {
+		rel, _ := filepath.Rel(p.Root, file)
+		rel = filepath.ToSlash(rel)
+		feature := strings.TrimPrefix(path.Dir(rel), "internal/")
+		found, err := fileRoutes(p, rel, "RegisterRoutes", p.basePath(), feature+".Handler")
+		if err != nil {
+			return nil, err
 		}
-		routes = append(routes, routesIn(p, fset, fn, "", nil)...)
-		// v1.Register(e.Group("/v1"), r.V1) mounts a version package.
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) == 0 {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			pkg, isIdent := identOf(sel)
-			if !ok || !isIdent || sel.Sel.Name != "Register" {
-				return true
-			}
-			importPath, known := imports[pkg]
-			rel, inProject := strings.CutPrefix(importPath, p.Module+"/")
-			if !known || !inProject {
-				return true
-			}
-			prefix := groupPrefix(call.Args[0])
-			found, err := packageRoutes(p, rel, prefix)
-			if err == nil {
-				routes = append(routes, found...)
-			}
-			return true
-		})
+		routes = append(routes, found...)
 	}
 	return routes, nil
 }
 
-// packageRoutes reads the Register function of the package in dir.
-func packageRoutes(p *Project, dir, prefix string) ([]Route, error) {
-	files, _ := filepath.Glob(filepath.Join(p.Root, filepath.FromSlash(dir), "*.go"))
-	slices.Sort(files)
+// fileRoutes reads the routes function fn of the file rel registers, under
+// prefix. receiver names what h is, e.g. "user.Handler", in the result.
+func fileRoutes(p *Project, rel, fn, prefix, receiver string) ([]Route, error) {
 	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, filepath.Join(p.Root, filepath.FromSlash(rel)), nil, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
 	var routes []Route
-	for _, path := range files {
-		if strings.HasSuffix(path, "_test.go") {
-			continue
+	for _, decl := range file.Decls {
+		if f, ok := decl.(*ast.FuncDecl); ok && f.Name.Name == fn && f.Body != nil {
+			routes = append(routes, routesIn(p, fset, f, prefix, importNames(file))...)
 		}
-		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-		if err != nil {
-			return nil, err
-		}
-		imports := importNames(file)
-		for _, decl := range file.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "Register" && fn.Recv == nil && fn.Body != nil {
-				routes = append(routes, routesIn(p, fset, fn, prefix, imports)...)
+	}
+	if receiver != "" {
+		for i := range routes {
+			if rest, ok := strings.CutPrefix(routes[i].Handler, "h."); ok {
+				routes[i].Handler = receiver + "." + rest
 			}
 		}
 	}
@@ -103,7 +105,7 @@ func routesIn(p *Project, fset *token.FileSet, fn *ast.FuncDecl, prefix string, 
 	if params := fn.Type.Params.List; len(params) > 0 && len(params[0].Names) > 0 {
 		groups[params[0].Names[0].Name] = prefix
 	}
-	for _, name := range []string{"e"} { // router.go registers on e directly
+	for _, name := range []string{"e"} { // app and server register on e directly
 		if _, ok := groups[name]; !ok {
 			groups[name] = prefix
 		}
@@ -130,7 +132,7 @@ func routesIn(p *Project, fset *token.FileSet, fn *ast.FuncDecl, prefix string, 
 			if base, isGroup := groups[recv]; isGroup && sel.Sel.Name == "Group" && len(call.Args) > 0 {
 				groups[name.Name] = base + stringArg(call.Args[0])
 			} else if path, isPkg := imports[recv]; isPkg && strings.HasPrefix(sel.Sel.Name, "New") {
-				handlers[name.Name] = strings.TrimPrefix(strings.TrimPrefix(path, p.Module+"/"), "internal/api/")
+				handlers[name.Name] = strings.TrimPrefix(strings.TrimPrefix(path, p.Module+"/"), "internal/")
 			}
 		case *ast.CallExpr:
 			sel, ok := node.Fun.(*ast.SelectorExpr)
@@ -163,8 +165,8 @@ func routesIn(p *Project, fset *token.FileSet, fn *ast.FuncDecl, prefix string, 
 	return routes
 }
 
-// handlerName is "v1/users.Handler.List" for userHandler.List when
-// userHandler came from users.NewHandler, otherwise the expression as written.
+// handlerName is "user.Handler.List" for userHandler.List when userHandler
+// came from user.NewHandler, otherwise the expression as written.
 func handlerName(fset *token.FileSet, expr ast.Expr, handlers map[string]string) string {
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
 		if recv, ok := identOf(sel); ok {
@@ -185,16 +187,6 @@ func identOf(sel *ast.SelectorExpr) (string, bool) {
 		return "", false
 	}
 	return id.Name, true
-}
-
-// groupPrefix reads "/v1" from e.Group("/v1").
-func groupPrefix(expr ast.Expr) string {
-	if call, ok := expr.(*ast.CallExpr); ok {
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Group" && len(call.Args) > 0 {
-			return stringArg(call.Args[0])
-		}
-	}
-	return ""
 }
 
 func stringArg(expr ast.Expr) string {

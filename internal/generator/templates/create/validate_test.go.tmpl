@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"{{.Module}}/internal/platform/problem"
+	"{{.Module}}/internal/server/response"
 )
 
 // positive is a validator, written the way make:validator writes them.
@@ -33,7 +33,7 @@ func TestRun(t *testing.T) {
 	if err := Run(ctx, newPositive("body.items.0.quantity", 0)); !errors.As(err, &verr) {
 		t.Fatalf("want an *Error, got %v", err)
 	}
-	want := problem.Error{Pointer: "#/items/0/quantity", Code: "general:min", Detail: "must be positive"}
+	want := response.Error{Pointer: "#/items/0/quantity", Code: "general:min", Detail: "must be positive"}
 	if verr.StatusCode() != http.StatusUnprocessableEntity || len(verr.Fields) != 1 || verr.Fields[0] != want {
 		t.Fatalf("got %d %+v", verr.StatusCode(), verr.Fields)
 	}
@@ -43,7 +43,7 @@ func TestRun(t *testing.T) {
 	if err := Run(ctx, notFound); !errors.As(err, &verr) || verr.StatusCode() != http.StatusNotFound {
 		t.Fatalf("want a 404, got %v", err)
 	}
-	body := verr.ResponseBody().(problem.Details)
+	body := verr.ResponseBody().(response.Details)
 	if body.Detail != "must be positive" || body.Errors[0].Parameter != "id" {
 		t.Fatalf("a 404 body: %+v", body)
 	}
@@ -75,8 +75,8 @@ func TestErrors(t *testing.T) {
 	if !errors.As(errs.Err(), &verr) || verr.StatusCode() != http.StatusUnprocessableEntity {
 		t.Fatalf("want a 422 *Error, got %v", errs.Err())
 	}
-	body := verr.ResponseBody().(problem.Details)
-	want := []problem.Error{
+	body := verr.ResponseBody().(response.Details)
+	want := []response.Error{
 		{Parameter: "page", Code: "general:min", Detail: "صفحه نباید کمتر از 1 باشد."},
 		{Pointer: "#/quantity", Code: "general:min", Detail: "must be positive"},
 	}

@@ -1,0 +1,22 @@
+// Package migrations holds the SQL migrations of the service, embedded in the
+// binary, so `layout1 migrate up` needs no files next to it in production.
+//
+// Each file is one migration, named <time>_<name>.sql, with an Up and a Down
+// part (goose, github.com/pressly/goose):
+//
+//	-- +goose Up
+//	CREATE TABLE ...;
+//
+//	-- +goose Down
+//	DROP TABLE ...;
+//
+// `./gortisan make:migration <name>` writes one. Never edit a migration that
+// has run somewhere; add a new one.
+package migrations
+
+import "embed"
+
+// FS holds the .sql files of this directory.
+//
+//go:embed *.sql
+var FS embed.FS

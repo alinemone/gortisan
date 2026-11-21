@@ -1,0 +1,43 @@
+package cmd
+
+import (
+	"context"
+
+	"github.com/spf13/cobra"
+
+	"{{.Module}}/internal/app"
+	"{{.Module}}/internal/config"
+)
+
+// migrateCommand runs the SQL migrations of internal/migrations. Write a new
+// one with `./gortisan make:migration <name>`.
+func migrateCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "migrate",
+		Short: "Apply or roll back the SQL migrations in internal/migrations",
+	}
+	cmd.AddCommand(
+		migrateStep("up", "Apply every pending migration", (*app.Migrations).Up),
+		migrateStep("down", "Roll back the last applied migration", (*app.Migrations).Down),
+		migrateStep("status", "List every migration and whether it ran", (*app.Migrations).Status),
+	)
+	return cmd
+}
+
+func migrateStep(name, short string, step func(*app.Migrations, context.Context) error) *cobra.Command {
+	return &cobra.Command{
+		Use:   name,
+		Short: short,
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return run(func(ctx context.Context, cfg config.Config) error {
+				m, err := app.OpenMigrations(ctx, cfg, cmd.OutOrStdout())
+				if err != nil {
+					return err
+				}
+				defer m.Close()
+				return step(m, ctx)
+			})
+		},
+	}
+}

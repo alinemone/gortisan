@@ -1,0 +1,11 @@
+package {{.Pkg}}
+
+import "github.com/labstack/echo/v5"
+
+// RegisterRoutes mounts the {{.Words}} endpoints on api, the BASE_PATH group.
+// Paths are relative to it: "{{.Route}}" serves BASE_PATH{{.Route}}.
+// `./gortisan make:handler` adds a line for each new action.
+func RegisterRoutes(api *echo.Group, h *Handler) {
+	g := api.Group("{{.Route}}")
+	_ = g // remove once a route is registered
+}

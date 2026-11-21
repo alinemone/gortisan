@@ -1,0 +1,7 @@
+{
+  "general:invalid-data": "داده‌های ارسال‌شده معتبر نیستند.",
+  "general:field-required": "%s اجباری است.",
+  "general:entity-not-found": "%s مورد نظر یافت نشد.",
+  "general:min": "%s نباید کمتر از %s باشد.",
+  "general:max": "%s نباید بیشتر از %s باشد."
+}

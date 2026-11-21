@@ -1,0 +1,63 @@
+// Package {{.Pkg}} is the {{.Words}} feature: its entity and errors here, the
+// use cases in service.go, storage in {{if .Postgres}}postgres.go{{else}}a Repository{{end}}, and HTTP in handler.go,
+// dto.go and routes.go. It never imports another feature; internal/app builds
+// it and connects it to the rest.
+package {{.Pkg}}
+
+import (
+{{- if .JSON}}
+	"encoding/json"
+{{- end}}
+	"errors"
+	"time"
+{{- if .Postgres}}
+
+	"github.com/uptrace/bun"
+{{- end}}
+)
+
+{{if .Postgres -}}
+// {{.Type}} is a row of {{.Table}}. Every field with a bun tag is a column;
+// to add one, add a field — e.g. Name string `bun:"name" json:"name"` — and
+// the column to the {{.Table}} table.
+//
+// Relations are fields too, loaded with orm.With in postgres.go, e.g.
+//
+//	Items []*Item `bun:"rel:has-many,join:id={{.Name}}_id" json:"items,omitempty"`
+//
+// bun tag options: pk and autoincrement for the primary key; nullzero writes
+// a zero value as NULL (so the database default applies); soft_delete makes
+// Delete set the column instead of removing the row.
+type {{.Type}} struct {
+	bun.BaseModel `bun:"table:{{.Table}}"`
+
+	ID        int64      `bun:"id,pk,autoincrement" json:"id"`
+{{- range .Fields}}
+	{{.GoName}} {{.GoType}} `bun:"{{.Tag}}" json:"{{.Column}}"`
+{{- end}}
+	CreatedAt time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+{{- if .SoftDelete}}
+	DeletedAt *time.Time `bun:"deleted_at,soft_delete,nullzero" json:"deleted_at,omitempty"`
+{{- end}}
+}
+{{- else -}}
+// {{.Type}} is the entity of this feature.
+type {{.Type}} struct {
+	ID        int64     `json:"id"`
+{{- range .Fields}}
+	{{.GoName}} {{.GoType}} `json:"{{.Column}}"`
+{{- end}}
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+{{- end}}
+
+// Errors of the {{.Words}} feature, in business terms. handler.go decides
+// which HTTP status each one becomes; the service never knows about HTTP.
+// Add more as the rules grow, e.g.
+//
+//	ErrMobileTaken = errors.New("mobile is already taken")
+var (
+	ErrNotFound = errors.New("{{.Words}} not found")
+)

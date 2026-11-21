@@ -1,0 +1,34 @@
+// Package platform opens the connections to infrastructure. It never knows
+// about a feature: features receive what it opens through their constructors,
+// built in internal/app.
+package platform
+
+import (
+	"context"
+
+	"github.com/uptrace/bun"
+
+	"{{.Module}}/internal/config"
+	"{{.Module}}/internal/platform/orm"
+)
+
+// OpenPostgres connects and pings the database: bun over pgx. orm takes plain
+// options, not the config package, so it stays free to move to a module of
+// its own. Repositories receive the *bun.DB (or a transaction, see orm.InTx)
+// in their constructor.
+func OpenPostgres(ctx context.Context, cfg config.Postgres) (*bun.DB, error) {
+	return orm.Open(ctx, orm.Options{
+		Host:            cfg.Host,
+		Port:            int(cfg.Port),
+		Database:        cfg.Database,
+		User:            cfg.User,
+		Password:        cfg.Password,
+		Schema:          cfg.Schema,
+		SSLMode:         cfg.SSLMode,
+		ApplicationName: "{{.Name}}",
+		ConnectTimeout:  cfg.ConnectTimeout,
+		MaxOpenConns:    cfg.MaxOpenConns,
+		MaxIdleConns:    cfg.MaxIdleConns,
+		ConnMaxLifetime: cfg.ConnMaxLifetime,
+	})
+}

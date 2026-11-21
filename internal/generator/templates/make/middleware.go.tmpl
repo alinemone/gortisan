@@ -5,11 +5,11 @@ import (
 )
 
 // {{.Func}} is an echo middleware. Give it what it needs as arguments and
-// register it in internal/router/router.go:
+// register it in internal/app/serve.go or a feature's routes.go:
 //
 //	e.Use(middleware.{{.Func}}())          // every route
-//	v1.Use(middleware.{{.Func}}())         // a group
-//	v1.GET("/x", h.X, middleware.{{.Func}}()) // one route
+//	g.Use(middleware.{{.Func}}())         // a group
+//	g.GET("/x", h.X, middleware.{{.Func}}()) // one route
 func {{.Func}}() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {

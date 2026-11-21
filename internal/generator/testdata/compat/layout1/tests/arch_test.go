@@ -1,0 +1,132 @@
+// Package tests holds the tests that span packages. Unit tests stay next to
+// the code they test.
+//
+// TestDependencies fails `go test ./...` when a package of internal/ imports
+// one it must not:
+//
+//   - A feature (internal/user, internal/sales/order, ...) never imports
+//     another feature. One feature calls another through a small interface
+//     it declares itself, and internal/app connects the two.
+//   - Shared packages — config, server, platform, clients, external,
+//     migrations — never import a feature: they know nothing of the business.
+//   - Nothing imports internal/app; only cmd/ does.
+//
+// It needs nothing but the standard library.
+package tests
+
+import (
+	"bufio"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// shared are the directories of internal/ that are not features.
+var shared = map[string]bool{
+	"app": true, "config": true, "server": true, "platform": true,
+	"clients": true, "external": true, "migrations": true,
+}
+
+func TestDependencies(t *testing.T) {
+	module := modulePath(t)
+	root := filepath.Join("..", "internal")
+	err := filepath.WalkDir(root, func(file string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(file, ".go") || strings.HasSuffix(file, "_test.go") {
+			return err
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, file)
+		if err != nil {
+			return err
+		}
+		from := path.Dir(filepath.ToSlash(rel))
+		for _, imp := range parsed.Imports {
+			target, _ := strconv.Unquote(imp.Path.Value)
+			to, ok := strings.CutPrefix(target, module+"/internal/")
+			if !ok {
+				continue
+			}
+			if reason := violation(from, to); reason != "" {
+				t.Errorf("internal/%s imports internal/%s: %s", filepath.ToSlash(rel), to, reason)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// violation explains why the package at from (a directory relative to
+// internal/) must not import the package at to, or returns "".
+func violation(from, to string) string {
+	switch {
+	case top(to) == "app":
+		return "only cmd/ builds the service; nothing in internal/ imports app"
+	case shared[top(from)] && top(from) != "app" && !shared[top(to)]:
+		return top(from) + " is shared and must not know about the " + to + " feature"
+	case !shared[top(from)] && !shared[top(to)] && !within(from, to) && !within(to, from):
+		return "features do not import each other; declare a small interface in " + from + " and connect the two in internal/app"
+	}
+	return ""
+}
+
+// top is the first directory of path: "sales" for "sales/order".
+func top(path string) string {
+	first, _, _ := strings.Cut(path, "/")
+	return first
+}
+
+// within reports whether pkg is dir or inside it.
+func within(pkg, dir string) bool {
+	return pkg == dir || strings.HasPrefix(pkg, dir+"/")
+}
+
+func modulePath(t *testing.T) string {
+	t.Helper()
+	file, err := os.Open(filepath.Join("..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(scanner.Text()), "module "); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	t.Fatal("go.mod has no module line")
+	return ""
+}
+
+func TestViolation(t *testing.T) {
+	cases := map[[2]string]bool{
+		{"user", "platform/orm"}:              false,
+		{"user", "server/validate"}:           false,
+		{"sales/order", "clients/wallet"}:     false,
+		{"sales/order/events", "sales/order"}: false,
+		{"app", "user"}:                       false,
+		{"app", "platform"}:                   false,
+		{"user", "order"}:                     true,
+		{"sales/order", "sales/payment"}:      true,
+		{"server", "user"}:                    true,
+		{"platform", "sales/order"}:           true,
+		{"clients/wallet", "user"}:            true,
+		{"user", "app"}:                       true,
+		{"server", "app"}:                     true,
+	}
+	for c, want := range cases {
+		if got := violation(c[0], c[1]) != ""; got != want {
+			t.Errorf("violation(%q, %q) = %v, want %v", c[0], c[1], got, want)
+		}
+	}
+}

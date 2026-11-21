@@ -17,7 +17,7 @@
 //	}
 //	return errs.Err()
 //
-// A failure is written as RFC 9457 problem details (internal/platform/problem).
+// A failure is written as RFC 9457 problem details (internal/server/response).
 package validate
 
 import (
@@ -26,7 +26,7 @@ import (
 	"strconv"
 	"strings"
 
-	"{{.Module}}/internal/platform/problem"
+	"{{.Module}}/internal/server/response"
 	"{{.Module}}/internal/platform/trans"
 )
 
@@ -68,13 +68,13 @@ func Run(ctx context.Context, v Validator) error {
 		return err
 	}
 	b := v.base()
-	return &Error{Status: b.Status, Fields: []problem.Error{field(b.Location, b.Code, v.Message())}}
+	return &Error{Status: b.Status, Fields: []response.Error{field(b.Location, b.Code, v.Message())}}
 }
 
 // Errors collects invalid fields to report them together. The zero value is
 // ready to use.
 type Errors struct {
-	fields []problem.Error
+	fields []response.Error
 }
 
 // Add records that the value at location is invalid, with the text of code
@@ -116,7 +116,7 @@ func (e *Errors) Err() error {
 type Error struct {
 	// Status is 0 for 422.
 	Status int
-	Fields []problem.Error
+	Fields []response.Error
 }
 
 func (e *Error) Error() string {
@@ -140,14 +140,14 @@ func (e *Error) ResponseBody() any {
 	if status != http.StatusUnprocessableEntity && len(e.Fields) == 1 {
 		detail = e.Fields[0].Detail
 	}
-	body := problem.New(status, detail)
+	body := response.New(status, detail)
 	body.Errors = e.Fields
 	return body
 }
 
 // field turns a location into a JSON Pointer or a parameter name.
-func field(location, code, detail string) problem.Error {
-	f := problem.Error{Code: code, Detail: detail}
+func field(location, code, detail string) response.Error {
+	f := response.Error{Code: code, Detail: detail}
 	where, name, found := strings.Cut(location, ".")
 	switch {
 	case found && (where == "query" || where == "path" || where == "header"):

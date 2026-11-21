@@ -1,98 +1,35 @@
 package generator
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
-// Project is the Go module `make` writes into.
-type Project struct {
-	Root   string
-	Module string
-}
-
-// FindProject walks up from dir to the nearest go.mod.
-func FindProject(dir string) (*Project, error) {
-	dir, err := filepath.Abs(dir)
-	if err != nil {
-		return nil, err
-	}
-	for {
-		gomod := filepath.Join(dir, "go.mod")
-		if _, err := os.Stat(gomod); err == nil {
-			module, err := readModule(gomod)
-			if err != nil {
-				return nil, err
-			}
-			return &Project{Root: dir, Module: module}, nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return nil, errors.New("no go.mod in this directory or any parent; run gortisan make inside a project")
-		}
-		dir = parent
-	}
-}
-
-func readModule(gomod string) (string, error) {
-	file, err := os.Open(gomod)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if rest, ok := strings.CutPrefix(line, "module "); ok {
-			return strings.Trim(strings.TrimSpace(rest), `"`), nil
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return "", err
-	}
-	return "", fmt.Errorf("%s has no module line", gomod)
-}
-
-func (p *Project) exists(rel string) bool {
-	_, err := os.Stat(filepath.Join(p.Root, filepath.FromSlash(rel)))
-	return err == nil
-}
-
-func (p *Project) require(path, why string) error {
-	if !p.exists(path) {
-		return fmt.Errorf("%s is missing; %s", path, why)
-	}
-	return nil
-}
-
-// Paths of the platform pieces make depends on.
+// Paths of the shared pieces make writes into or depends on.
 const (
-	ormPath      = "internal/platform/database/orm/orm.go"
-	redisPath    = "internal/platform/cache/redis.go"
-	validatePath = "internal/platform/validate/validate.go"
-	langPath     = "internal/platform/trans/lang/fa.json"
+	appServe      = "internal/app/serve.go"
+	ormDir        = "internal/platform/orm"
+	validatePath  = "internal/server/validate/validate.go"
+	validatorDir  = "internal/server/validator"
+	middlewareDir = "internal/server/middleware"
+	langPath      = "internal/platform/trans/lang/fa.json"
+	migrationsDir = "internal/migrations"
 )
 
-// validateOutputs are validation, problem details and translation: every
-// project has them, and make writes them into one that has no validate.
-var validateOutputs = []output{
-	{"internal/platform/problem/problem.go", "create/problem.go.tmpl"},
-	{"internal/platform/trans/trans.go", "create/trans.go.tmpl"},
-	{"internal/platform/trans/trans_test.go", "create/trans_test.go.tmpl"},
-	{langPath, "create/lang_fa.json.tmpl"},
-	{validatePath, "create/validate.go.tmpl"},
-	{"internal/platform/validate/validate_test.go", "create/validate_test.go.tmpl"},
-}
+// sharedDirs are the directories of internal/ that are not features; a
+// feature cannot take one of their names.
+var sharedDirs = []string{"app", "config", "server", "platform", "clients", "external", "migrations"}
 
 // MakeOptions configure Make.
 type MakeOptions struct {
@@ -104,47 +41,47 @@ type MakeOptions struct {
 	Type string
 	// Members are the enum values, e.g. "pending,paid=5".
 	Members string
+	// Now stamps migration file names; time.Now when zero.
+	Now time.Time
 }
 
 // MakeKinds are what `gortisan make` can write.
 var MakeKinds = []string{
-	"model", "service", "handler", "request", "response", "validator", "enum",
-	"cache", "middleware", "client", "test",
+	"feature", "handler", "migration", "enum", "cache", "validator",
+	"middleware", "client", "external", "test",
 }
 
 // Make writes one building block of kind named name into p.
 //
-// A project has four layers under internal/:
-//
-//	domain/<subject>/      the business: model, errors, store, repository, service
-//	api/<version>/<resources>/  HTTP (named like the URL, e.g. users): handler, request, response
-//	platform/              infrastructure
-//
-// Subjects may be grouped: "sales/order" is internal/domain/sales/order.
+// A feature is one package under internal/ — internal/user, or grouped,
+// internal/sales/order — with everything of it: entity and errors, service,
+// storage, HTTP handlers, DTOs and routes. Shared code lives in
+// internal/server, internal/platform, internal/clients and internal/external.
 func Make(p *Project, kind, name string, opts MakeOptions) (*Report, error) {
 	report := &Report{}
+	if err := p.Check(); err != nil {
+		return report, err
+	}
 	var err error
 	switch kind {
-	case "model":
-		err = makeModel(p, name, opts, report)
-	case "service":
-		err = makeService(p, name, opts, report)
+	case "feature":
+		err = makeFeature(p, name, opts, report)
 	case "handler":
 		err = makeHandler(p, name, report)
-	case "request":
-		err = makeRequest(p, name, report)
-	case "response":
-		err = makeResponse(p, name, report)
-	case "validator":
-		err = makeValidator(p, name, report)
+	case "migration":
+		err = makeMigration(p, name, opts, report)
 	case "enum":
 		err = makeEnum(p, name, opts, report)
 	case "cache":
 		err = makeCache(p, name, opts, report)
+	case "validator":
+		err = makeValidator(p, name, report)
 	case "middleware":
 		err = makeMiddleware(p, name, opts, report)
-	case "client", "sdk":
-		err = makeClient(p, name, opts, report)
+	case "client":
+		err = makeClient(p, name, "clients", "client", "make/client.go.tmpl", opts, report)
+	case "external":
+		err = makeClient(p, name, "external", "", "make/external.go.tmpl", opts, report)
 	case "test":
 		err = makeTest(p, name, opts, report)
 	default:
@@ -153,7 +90,7 @@ func Make(p *Project, kind, name string, opts MakeOptions) (*Report, error) {
 	return report, err
 }
 
-// feature is one subject of the domain, e.g. internal/domain/sales/order.
+// feature is one feature package, e.g. internal/sales/order.
 type feature struct {
 	Path   string // sales/order (directories, as written)
 	Name   string // order (snake, last segment)
@@ -162,21 +99,31 @@ type feature struct {
 	Parent string // sales (empty when not grouped)
 }
 
-func (f feature) Dir() string { return "internal/domain/" + f.Path }
+func (f feature) Dir() string { return "internal/" + f.Path }
 
-// Label is "sales.order", used to name workers.
+// Label is "sales.order", used to prefix cache keys.
 func (f feature) Label() string { return strings.ReplaceAll(f.Path, "/", ".") }
+
+// Route is the default path of the feature under BASE_PATH: /users, or
+// /sales/orders for a grouped feature.
+func (f feature) Route() string {
+	route := "/" + plural(strings.ReplaceAll(f.Name, "_", "-"))
+	if f.Parent != "" {
+		route = "/" + f.Parent + route
+	}
+	return route
+}
 
 // parseFeature reads "user" or "sales/order_item".
 func parseFeature(path string) (feature, error) {
 	path = strings.Trim(filepath.ToSlash(path), "/")
 	if path == "" {
-		return feature{}, errors.New("a subject name is required, e.g. user or sales/order")
+		return feature{}, errors.New("a feature name is required, e.g. user or sales/order")
 	}
 	var dirs []string
 	var last string
 	for _, segment := range strings.Split(path, "/") {
-		n, err := identifier("subject", segment)
+		n, err := identifier("feature", segment)
 		if err != nil {
 			return feature{}, err
 		}
@@ -187,6 +134,9 @@ func parseFeature(path string) (feature, error) {
 		}
 		dirs = append(dirs, pkg)
 	}
+	if slices.Contains(sharedDirs, dirs[0]) {
+		return feature{}, fmt.Errorf("%q is a shared directory of internal/ (%s), not a feature; pick another name", dirs[0], strings.Join(sharedDirs, ", "))
+	}
 	return feature{
 		Path:   strings.Join(dirs, "/"),
 		Name:   last,
@@ -196,12 +146,12 @@ func parseFeature(path string) (feature, error) {
 	}, nil
 }
 
-// splitItem reads "<subject>/<item>", e.g. user/status or sales/order/status.
+// splitItem reads "<feature>/<item>", e.g. user/status or sales/order/status.
 func splitItem(kind, name string) (feature, string, error) {
 	name = strings.Trim(filepath.ToSlash(name), "/")
 	i := strings.LastIndex(name, "/")
 	if i < 0 {
-		return feature{}, "", fmt.Errorf("%s name must be <subject>/<name>, e.g. user/status; got %q", kind, name)
+		return feature{}, "", fmt.Errorf("%s name must be <feature>/<name>, e.g. user/list; got %q", kind, name)
 	}
 	f, err := parseFeature(name[:i])
 	if err != nil {
@@ -211,54 +161,39 @@ func splitItem(kind, name string) (feature, string, error) {
 	return f, item, err
 }
 
-var versionRE = regexp.MustCompile(`^v[0-9]+$`)
-
-// splitAPI reads "<version>/<subject>/<item>", e.g. v1/user/list or
-// v2/sales/order/create.
-func splitAPI(kind, name string) (string, feature, string, error) {
-	name = strings.Trim(filepath.ToSlash(name), "/")
-	version, rest, _ := strings.Cut(name, "/")
-	if !versionRE.MatchString(version) {
-		return "", feature{}, "", fmt.Errorf("%s name must start with the API version: <version>/<subject>/<name>, e.g. v1/user/list; got %q", kind, name)
-	}
-	f, item, err := splitItem(kind, rest)
-	return version, f, item, err
-}
-
 // data is what the make templates are rendered with.
 type data struct {
-	Module string
-	Pkg    string // the package being written
-	Name   string
-	Words  string // "order item"
-	Type   string
-	Var    string
+	Module  string
+	Pkg     string // the package being written
+	Name    string
+	Words   string // "order item"
+	Type    string
+	Var     string
+	Feature string // sales/order
 
 	Table      string
 	Fields     []Field
 	SoftDelete bool
 	JSON       bool
+	Postgres   bool
+	Swagger    bool
 
-	HasStore   bool
-	HasService bool
+	Route       string // the feature's group path, /users
+	Action      string
+	Method      string
+	MethodLower string
+	Path        string // the action's path inside the group, /:id
+	SwagPath    string // /users/{id}
+	Tag         string
+	HasID       bool
+	TestURL     string
 
-	DomainPkg    string
-	DomainImport string
-	Version      string
-	Action       string
-	Route        string
-	Method       string
-	Path         string
-	TestURL      string
-
-	Message string
 	Base    string
 	Members []EnumMember
 	Plural  string
 	Value   string
 	Prefix  string
 	Func    string
-	Feature string
 
 	Package   string
 	Title     string
@@ -267,53 +202,33 @@ type data struct {
 
 func (f feature) data(p *Project) data {
 	return data{
-		Module:       p.Module,
-		Pkg:          f.Pkg,
-		Name:         f.Name,
-		Words:        strings.ReplaceAll(f.Name, "_", " "),
-		Type:         f.Type,
-		Var:          camel(f.Type),
-		DomainPkg:    f.Pkg,
-		DomainImport: p.Module + "/" + f.Dir(),
-		Feature:      f.Label(),
+		Module:   p.Module,
+		Pkg:      f.Pkg,
+		Name:     f.Name,
+		Words:    strings.ReplaceAll(f.Name, "_", " "),
+		Type:     f.Type,
+		Var:      camel(f.Type),
+		Feature:  f.Path,
+		Route:    f.Route(),
+		Postgres: p.Has("postgres"),
+		Swagger:  p.Has("swagger"),
 	}
 }
 
-// ensure writes the outputs that do not exist yet, without reporting the ones
-// that do: shared files several commands need.
-func ensure(p *Project, outputs []output, d any, report *Report) error {
-	for _, out := range outputs {
-		if p.exists(out.path) {
-			continue
-		}
-		if err := renderAll(p.Root, []output{out}, d, false, report); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ensureValidate writes validate, problem, trans and lang when the project
-// has no internal/platform/validate.
-func ensureValidate(p *Project, report *Report) error {
-	if p.exists(validatePath) {
-		return nil
-	}
-	return ensure(p, validateOutputs, projectData{Module: p.Module}, report)
-}
-
-func makeModel(p *Project, name string, opts MakeOptions, report *Report) error {
-	if err := p.require(ormPath, "make:model needs a project created with postgres"); err != nil {
-		return err
-	}
+func makeFeature(p *Project, name string, opts MakeOptions, report *Report) error {
 	f, err := parseFeature(name)
 	if err != nil {
 		return err
 	}
+	dir := f.Dir()
+	if p.exists(dir+"/service.go") && !opts.Force {
+		return fmt.Errorf("%s already exists; add to it with make:handler %s/<action>, or pass --force to overwrite its files", dir, f.Path)
+	}
 	d := f.data(p)
 	d.Table = opts.Table
 	if d.Table == "" {
-		d.Table = plural(f.Name)
+		d.Table = strings.ReplaceAll(f.Path, "/", "_")
+		d.Table = d.Table[:len(d.Table)-len(f.Name)] + plural(f.Name)
 	}
 	if d.Table, err = identifier("table", d.Table); err != nil {
 		return err
@@ -325,175 +240,176 @@ func makeModel(p *Project, name string, opts MakeOptions, report *Report) error 
 	for _, field := range d.Fields {
 		d.JSON = d.JSON || field.JSON
 	}
-	dir := f.Dir()
-	if err := renderAll(p.Root, []output{
-		{dir + "/" + f.Pkg + ".go", "make/model.go.tmpl"},
-		{dir + "/errors.go", "make/errors.go.tmpl"},
-		{dir + "/store.go", "make/store.go.tmpl"},
-		{dir + "/repository.go", "make/repository.go.tmpl"},
-	}, d, opts.Force, report); err != nil {
+
+	outputs := []output{
+		{dir + "/" + f.Pkg + ".go", "make/feature_entity.go.tmpl"},
+		{dir + "/service.go", "make/feature_service.go.tmpl"},
+		{dir + "/handler.go", "make/feature_handler.go.tmpl"},
+		{dir + "/dto.go", "make/feature_dto.go.tmpl"},
+		{dir + "/routes.go", "make/feature_routes.go.tmpl"},
+		{dir + "/service_test.go", "make/feature_service_test.go.tmpl"},
+	}
+	if d.Postgres {
+		outputs = append(outputs, output{dir + "/postgres.go", "make/feature_postgres.go.tmpl"})
+	}
+	if err := renderAll(p.Root, outputs, d, opts.Force, report); err != nil {
 		return err
 	}
-	report.next("create the %s table in the database yourself, or with the migration tool you use", d.Table)
-	report.next("then: ./gortisan make:service %s", f.Path)
+	if d.Postgres && p.Has("migrations") {
+		file := migrationsDir + "/" + freshStamp(p, opts.Now) + "_create_" + d.Table + ".sql"
+		if err := renderAll(p.Root, []output{{file, "make/create_table.sql.tmpl"}}, d, false, report); err != nil {
+			return err
+		}
+		report.next("create the table: go run . migrate up   (%s)", file)
+	} else if d.Postgres {
+		report.next("the %s table is yours to create; postgres.go reads and writes it", d.Table)
+	}
+
+	// Wire it into internal/app: the service, its storage, its routes.
+	service := d.Var + "Service"
+	repo := "nil /* a Repository */"
+	if d.Postgres {
+		repo = f.Pkg + ".NewPostgres(db)"
+	}
+	lines := []string{
+		fmt.Sprintf("%s := %s.NewService(%s)", service, f.Pkg, repo),
+		fmt.Sprintf("%s.RegisterRoutes(api, %s.NewHandler(%s))", f.Pkg, f.Pkg, service),
+	}
+	imports := []string{strconv.Quote(p.Module + "/" + dir)}
+	if _, err := addToFunc(p, appServe, "features", lines, imports, nil, true, report); err != nil {
+		if !errors.Is(err, errNoFunc) && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		report.next("build it in %s: %s", appServe, strings.Join(lines, "; "))
+	}
+	if !d.Postgres {
+		report.next("give %s a Repository in %s (it is nil until then)", service, appServe)
+	}
+	report.next("add an endpoint: ./gortisan make:handler %s/list", f.Path)
 	return nil
-}
-
-func makeService(p *Project, name string, opts MakeOptions, report *Report) error {
-	f, err := parseFeature(strings.TrimSuffix(snake(name), "_service"))
-	if err != nil {
-		return err
-	}
-	d := f.data(p)
-	d.HasStore = p.exists(f.Dir() + "/store.go")
-	errorsFile := []output{}
-	if !p.exists(f.Dir() + "/errors.go") {
-		errorsFile = append(errorsFile, output{f.Dir() + "/errors.go", "make/errors.go.tmpl"})
-	}
-	if err := renderAll(p.Root, append(errorsFile, output{f.Dir() + "/service.go", "make/service.go.tmpl"}), d, opts.Force, report); err != nil {
-		return err
-	}
-	if d.HasStore {
-		report.next("build it in cmd/api/main.go: %s.NewService(%s.NewRepository(db))", f.Pkg, f.Pkg)
-	} else {
-		report.next("build it in cmd/api/main.go: %s.NewService()", f.Pkg)
-	}
-	return nil
-}
-
-// apiPackage is where version's HTTP code for f lives, named like the URL:
-// internal/api/v1/users for /v1/users, internal/api/v1/sales/orders. The plural
-// also keeps it apart from the domain package (user), so neither needs an
-// import alias.
-func apiPackage(version string, f feature) (dir, pkg string) {
-	pkg = strings.ReplaceAll(plural(f.Name), "_", "")
-	dir = "internal/api/" + version
-	if f.Parent != "" {
-		dir += "/" + f.Parent
-	}
-	return dir + "/" + pkg, pkg
-}
-
-// ensureVersion writes internal/api/<version>/routes.go for a new version.
-func ensureVersion(p *Project, version string, report *Report) error {
-	routes := "internal/api/" + version + "/routes.go"
-	if p.exists(routes) {
-		return nil
-	}
-	if err := renderAll(p.Root, []output{{routes, "create/version_routes.go.tmpl"}}, projectData{Module: p.Module, Version: version}, false, report); err != nil {
-		return err
-	}
-	report.next("mount the new version in internal/api/router.go: import %q, add `%s %s.Services` to Routes and call %s.Register(e.Group(\"/%s\"), r.%s); then set it in cmd/api/main.go",
-		p.Module+"/internal/api/"+version, strings.ToUpper(version), version, version, version, strings.ToUpper(version))
-	return nil
-}
-
-func apiData(p *Project, version string, f feature, item string) data {
-	d := f.data(p)
-	d.Version = version
-	_, d.Pkg = apiPackage(version, f)
-	d.Action = pascal(item)
-	d.Route = "/" + plural(strings.ReplaceAll(f.Name, "_", "-"))
-	d.Method, d.Path = routeFor(d.Action, d.Route)
-	d.Var = camel(f.Name) + "Handler"
-	d.HasService = p.exists(f.Dir() + "/service.go")
-	return d
 }
 
 func makeHandler(p *Project, name string, report *Report) error {
-	version, f, action, err := splitAPI("handler", name)
+	f, action, err := splitItem("handler", name)
 	if err != nil {
 		return err
 	}
-	if err := ensureValidate(p, report); err != nil {
+	dir := f.Dir()
+	if err := p.require(dir+"/handler.go", "run make:feature "+f.Path+" first"); err != nil {
 		return err
 	}
-	if err := ensureVersion(p, version, report); err != nil {
-		return err
-	}
-	dir, pkg := apiPackage(version, f)
-	d := apiData(p, version, f, action)
-
-	handlerFile := dir + "/handler.go"
-	isNew := !p.exists(handlerFile)
-	if isNew {
-		if err := renderAll(p.Root, []output{{handlerFile, "make/handler.go.tmpl"}}, d, false, report); err != nil {
-			return err
-		}
-	}
+	d := handlerData(p, f, action)
 	for _, step := range []struct{ file, tmpl string }{
-		{handlerFile, "make/handler_action.go.tmpl"},
-		{dir + "/request.go", "make/request.go.tmpl"},
-		{dir + "/response.go", "make/response.go.tmpl"},
+		{dir + "/handler.go", "make/handler_action.go.tmpl"},
+		{dir + "/dto.go", "make/dto_request.go.tmpl"},
+		{dir + "/dto.go", "make/dto_response.go.tmpl"},
 	} {
 		if err := writeOrAppend(p, step.file, step.tmpl, d, report); err != nil {
 			return err
 		}
 	}
 
-	routes := "internal/api/" + version + "/routes.go"
-	if isNew {
-		if d.HasService {
-			report.next("in %s: add `%s *%s.Service` to Services, then `%s := %s.NewHandler(s.%s)` in Register; set %s in cmd/api/main.go",
-				routes, f.Type, f.Pkg, d.Var, pkg, f.Type, f.Type)
-		} else {
-			report.next("in %s: `%s := %s.NewHandler()` in Register (run make:service %s to give it the domain service)",
-				routes, d.Var, pkg, f.Path)
+	routes := dir + "/routes.go"
+	group, _, ok := routeGroup(p, routes)
+	line := fmt.Sprintf("g.%s(%q, h.%s)", d.Method, d.Path, d.Action)
+	if ok {
+		line = fmt.Sprintf("%s.%s(%q, h.%s)", group, d.Method, d.Path, d.Action)
+		if _, err := addToFunc(p, routes, "RegisterRoutes", []string{line}, nil, []string{"_ = " + group}, false, report); err != nil {
+			return err
 		}
+	} else {
+		report.next("register it in %s: %s", routes, line)
 	}
-	report.next("register the route in %s, e.g. g.%s(%q, %s.%s)", routes, d.Method, d.Path, d.Var, d.Action)
+	if d.Swagger {
+		report.next("document it in the swag comments of %s, then ./gortisan swag", d.Action)
+	}
 	return nil
 }
 
+// handlerData describes an action of f: its method and path come from its
+// name (routeFor), its group path from routes.go.
+func handlerData(p *Project, f feature, action string) data {
+	d := f.data(p)
+	d.Action = pascal(action)
+	if _, route, ok := routeGroup(p, f.Dir()+"/routes.go"); ok {
+		d.Route = route
+	}
+	d.Method, d.Path = routeFor(d.Action)
+	d.MethodLower = strings.ToLower(d.Method)
+	d.HasID = strings.Contains(d.Path, ":id")
+	d.SwagPath = strings.ReplaceAll(d.Route+d.Path, ":id", "{id}")
+	d.Tag = strings.TrimPrefix(d.Route, "/")
+	d.TestURL = strings.ReplaceAll(d.Route+d.Path, ":id", "1")
+	d.Var = camel(f.Type) + d.Action
+	return d
+}
+
 // routeFor guesses the REST method and path of an action from its name:
-// Create is POST /users, Get is GET /users/:id, and so on. Anything else is a
-// GET on the collection; the hint is only a suggestion.
-func routeFor(action, collection string) (string, string) {
+// Create is POST "", Get is GET /:id, and so on. Anything else is a GET on
+// /<action>; the route is only a starting point.
+func routeFor(action string) (string, string) {
 	switch action {
 	case "List", "Index", "Search":
-		return "GET", collection
+		return "GET", ""
 	case "Get", "Show", "Find":
-		return "GET", collection + "/:id"
+		return "GET", "/:id"
 	case "Create", "Store":
-		return "POST", collection
+		return "POST", ""
 	case "Update", "Edit":
-		return "PUT", collection + "/:id"
+		return "PUT", "/:id"
 	case "Patch":
-		return "PATCH", collection + "/:id"
+		return "PATCH", "/:id"
 	case "Delete", "Destroy", "Remove":
-		return "DELETE", collection + "/:id"
+		return "DELETE", "/:id"
 	}
-	return "GET", collection + "/" + strings.ReplaceAll(snake(action), "_", "-")
+	return "GET", "/" + strings.ReplaceAll(snake(action), "_", "-")
 }
 
-func makeRequest(p *Project, name string, report *Report) error {
-	version, f, item, err := splitAPI("request", name)
+func makeMigration(p *Project, name string, opts MakeOptions, report *Report) error {
+	if err := p.need("migrations", "make:migration"); err != nil {
+		return err
+	}
+	n, err := identifier("migration", name)
 	if err != nil {
 		return err
 	}
-	if err := ensureValidate(p, report); err != nil {
+	file := migrationsDir + "/" + freshStamp(p, opts.Now) + "_" + n + ".sql"
+	if err := renderAll(p.Root, []output{{file, "make/migration.sql.tmpl"}}, data{Name: n}, opts.Force, report); err != nil {
 		return err
 	}
-	dir, _ := apiPackage(version, f)
-	d := apiData(p, version, f, strings.TrimSuffix(item, "_request"))
-	return writeOrAppend(p, dir+"/request.go", "make/request.go.tmpl", d, report)
+	report.next("write the change in %s, then: go run . migrate up", file)
+	return nil
 }
 
-func makeResponse(p *Project, name string, report *Report) error {
-	version, f, item, err := splitAPI("response", name)
-	if err != nil {
-		return err
+// migrationStamp is the version of a migration: the UTC time to the second.
+func migrationStamp(now time.Time) string {
+	if now.IsZero() {
+		now = time.Now()
 	}
-	dir, _ := apiPackage(version, f)
-	d := apiData(p, version, f, strings.TrimSuffix(item, "_response"))
-	return writeOrAppend(p, dir+"/response.go", "make/response.go.tmpl", d, report)
+	return now.UTC().Format("20060102150405")
 }
 
-// makeValidator writes internal/api/validator/<group>/<name>.go, or
-// internal/api/validator/<name>.go without a group, and adds its message key
-// to internal/platform/trans/lang/fa.json.
+// freshStamp is migrationStamp moved forward a second at a time until no
+// migration uses it: two make commands in the same second must not share a
+// version.
+func freshStamp(p *Project, now time.Time) string {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	for {
+		stamp := migrationStamp(now)
+		if matches, _ := filepath.Glob(filepath.Join(p.Root, filepath.FromSlash(migrationsDir), stamp+"_*")); len(matches) == 0 {
+			return stamp
+		}
+		now = now.Add(time.Second)
+	}
+}
+
+// makeValidator writes internal/server/validator/<group>/<name>.go, or
+// internal/server/validator/<name>.go without a group, and adds its message
+// key to internal/platform/trans/lang/fa.json.
 func makeValidator(p *Project, name string, report *Report) error {
-	dir, pkg, prefix := "internal/api/validator", "validator", "validation"
+	dir, pkg, prefix := validatorDir, "validator", "validation"
 	var item string
 	var err error
 	if strings.Contains(strings.Trim(filepath.ToSlash(name), "/"), "/") {
@@ -505,18 +421,8 @@ func makeValidator(p *Project, name string, report *Report) error {
 	} else if item, err = identifier("validator", name); err != nil {
 		return err
 	}
-
-	if err := ensureValidate(p, report); err != nil {
+	if err := p.require(validatePath, "make:validator builds on validate.Base"); err != nil {
 		return err
-	}
-	src, err := os.ReadFile(filepath.Join(p.Root, filepath.FromSlash(validatePath)))
-	if err != nil {
-		return err
-	}
-	if !bytes.Contains(src, []byte("type Base struct")) {
-		return fmt.Errorf("%s comes from an older gortisan and has no validate.Base; "+
-			"replace internal/platform/validate with the one of a new project (gortisan create), "+
-			"with internal/platform/problem and internal/platform/trans", validatePath)
 	}
 	if err := p.require(langPath, "make:validator adds the validator's message there"); err != nil {
 		return err
@@ -536,8 +442,8 @@ func makeValidator(p *Project, name string, report *Report) error {
 	return nil
 }
 
-// addPhrase adds key to internal/platform/trans/lang/fa.json, after the last entry, unless it is
-// there already. The rest of the file is kept as it is.
+// addPhrase adds key to the language file, after the last entry, unless it
+// is there already. The rest of the file is kept as it is.
 func addPhrase(p *Project, key, text string, report *Report) error {
 	path := filepath.Join(p.Root, filepath.FromSlash(langPath))
 	src, err := os.ReadFile(path)
@@ -660,7 +566,7 @@ func parseMembers(spec string, isString bool) ([]EnumMember, error) {
 }
 
 func makeCache(p *Project, name string, opts MakeOptions, report *Report) error {
-	if err := p.require(redisPath, "make:cache needs a project created with redis"); err != nil {
+	if err := p.need("redis", "make:cache"); err != nil {
 		return err
 	}
 	f, item, err := splitItem("cache", name)
@@ -678,7 +584,7 @@ func makeCache(p *Project, name string, opts MakeOptions, report *Report) error 
 	if err := writeOrAppend(p, f.Dir()+"/cache.go", "make/cache.go.tmpl", d, report); err != nil {
 		return err
 	}
-	report.next("build it in cmd/api/main.go: %s.New%s(rdb, time.Hour, load)", f.Pkg, d.Type)
+	report.next("build it in %s: %s.New%s(rdb, time.Hour, load)", appServe, f.Pkg, d.Type)
 	return nil
 }
 
@@ -688,15 +594,18 @@ func makeMiddleware(p *Project, name string, opts MakeOptions, report *Report) e
 		return err
 	}
 	d := data{Module: p.Module, Func: pascal(n)}
-	if err := renderAll(p.Root, []output{{"internal/api/middleware/" + n + ".go", "make/middleware.go.tmpl"}}, d, opts.Force, report); err != nil {
+	if err := renderAll(p.Root, []output{{middlewareDir + "/" + n + ".go", "make/middleware.go.tmpl"}}, d, opts.Force, report); err != nil {
 		return err
 	}
-	report.next("use it in internal/api/router.go (every route) or a version's routes.go, e.g. g.Use(middleware.%s())", d.Func)
+	report.next("use it in %s (every route) or a feature's routes.go, e.g. g.Use(middleware.%s())", appServe, d.Func)
 	return nil
 }
 
-func makeClient(p *Project, name string, opts MakeOptions, report *Report) error {
-	n, err := identifier("client", name)
+// makeClient writes an HTTP client: internal/clients/<name>/client.go for one
+// of our own services, internal/external/<name>/<name>.go for a third-party
+// API. file is the file name; empty means <name>.go.
+func makeClient(p *Project, name, parent, file, tmpl string, opts MakeOptions, report *Report) error {
+	n, err := identifier(strings.TrimSuffix(parent, "s"), name)
 	if err != nil {
 		return err
 	}
@@ -706,15 +615,48 @@ func makeClient(p *Project, name string, opts MakeOptions, report *Report) error
 		}
 		return -1
 	}, n)
-	if p.exists("internal/platform/" + pkg) {
-		return fmt.Errorf("internal/platform/%s already exists; pick another name", pkg)
+	dir := "internal/" + parent + "/" + pkg
+	if p.exists(dir) {
+		return fmt.Errorf("%s already exists; pick another name", dir)
+	}
+	if file == "" {
+		file = pkg
 	}
 	d := data{Package: pkg, Title: title(n), EnvPrefix: strings.ToUpper(n)}
-	if err := renderAll(p.Root, []output{{"internal/platform/" + pkg + "/client.go", "make/client.go.tmpl"}}, d, opts.Force, report); err != nil {
+	if err := renderAll(p.Root, []output{{dir + "/" + file + ".go", tmpl}}, d, opts.Force, report); err != nil {
 		return err
 	}
-	report.next("add %s_BASE_URL to internal/platform/config and build it in cmd/api/main.go: %s.New(%s.Config{BaseURL: ...})", d.EnvPrefix, pkg, pkg)
+	report.next("add %s_BASE_URL to internal/config and build it in %s: %s.New(%s.Config{BaseURL: ...})", d.EnvPrefix, appServe, pkg, pkg)
+	report.next("a feature that calls it declares the small interface it needs and receives the client in its constructor")
 	return nil
+}
+
+// makeTest writes a test: for a feature (user), a service test with a fake
+// Repository; for an action (user/list), an HTTP test of that handler.
+func makeTest(p *Project, name string, opts MakeOptions, report *Report) error {
+	if f, err := parseFeature(name); err == nil && p.exists(f.Dir()+"/service.go") {
+		return renderAll(p.Root, []output{{f.Dir() + "/service_test.go", "make/feature_service_test.go.tmpl"}}, f.data(p), opts.Force, report)
+	}
+	f, action, err := splitItem("test", name)
+	if err != nil {
+		return err
+	}
+	if err := p.require(f.Dir()+"/handler.go", "run make:feature "+f.Path+" first"); err != nil {
+		return err
+	}
+	d := handlerData(p, f, action)
+	src, err := os.ReadFile(filepath.Join(p.Root, filepath.FromSlash(f.Dir()), "handler.go"))
+	if err != nil {
+		return err
+	}
+	parsed, err := parser.ParseFile(token.NewFileSet(), "handler.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(declNames(parsed), "Handler."+d.Action) {
+		return fmt.Errorf("%s/handler.go has no %s; run make:handler %s first", f.Dir(), d.Action, name)
+	}
+	return renderAll(p.Root, []output{{f.Dir() + "/" + action + "_test.go", "make/handler_test.go.tmpl"}}, d, opts.Force, report)
 }
 
 func (r *Report) merge(other *Report) {

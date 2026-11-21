@@ -1,0 +1,90 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"time"
+
+	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
+	"github.com/uptrace/bun"
+
+	"example.com/compat/internal/config"
+	"example.com/compat/internal/migrations"
+	"example.com/compat/internal/platform"
+)
+
+// Migrations runs the SQL files of internal/migrations with goose. A
+// Postgres advisory lock lets one process migrate at a time, so replicas
+// that start together never apply a migration twice.
+type Migrations struct {
+	db       *bun.DB
+	provider *goose.Provider
+	out      io.Writer
+}
+
+// OpenMigrations connects to the database of cfg; out receives the report.
+func OpenMigrations(ctx context.Context, cfg config.Config, out io.Writer) (*Migrations, error) {
+	db, err := platform.OpenPostgres(ctx, cfg.Postgres)
+	if err != nil {
+		return nil, err
+	}
+	locker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db.DB, migrations.FS, goose.WithSessionLocker(locker))
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrations: %w", err)
+	}
+	return &Migrations{db: db, provider: provider, out: out}, nil
+}
+
+// Close closes the database connection.
+func (m *Migrations) Close() error {
+	return m.db.Close()
+}
+
+// Up applies every pending migration.
+func (m *Migrations) Up(ctx context.Context) error {
+	results, err := m.provider.Up(ctx)
+	m.report(results...)
+	if err == nil && len(results) == 0 {
+		fmt.Fprintln(m.out, "nothing to migrate")
+	}
+	return err
+}
+
+// Down rolls back the last applied migration.
+func (m *Migrations) Down(ctx context.Context) error {
+	result, err := m.provider.Down(ctx)
+	if result != nil {
+		m.report(result)
+	}
+	return err
+}
+
+// Status lists every migration and whether it ran.
+func (m *Migrations) Status(ctx context.Context) error {
+	statuses, err := m.provider.Status(ctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range statuses {
+		state := "pending"
+		if s.State == goose.StateApplied {
+			state = "applied " + s.AppliedAt.Format(time.DateTime)
+		}
+		fmt.Fprintf(m.out, "%-48s %s\n", s.Source.Path, state)
+	}
+	return nil
+}
+
+func (m *Migrations) report(results ...*goose.MigrationResult) {
+	for _, r := range results {
+		fmt.Fprintf(m.out, "%-6s %-48s %s\n", r.Direction, r.Source.Path, r.Duration.Round(time.Millisecond))
+	}
+}

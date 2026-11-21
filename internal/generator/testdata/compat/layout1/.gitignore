@@ -1,0 +1,8 @@
+/bin/
+/layout1
+*.exe
+*.test
+*.out
+.env
+.idea/
+.vscode/

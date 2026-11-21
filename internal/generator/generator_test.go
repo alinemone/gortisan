@@ -8,7 +8,41 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
+
+// newProject creates a project in a temporary directory, without go mod
+// tidy, so the test needs no network.
+func newProject(t *testing.T, with string) *Project {
+	t.Helper()
+	dir := t.TempDir()
+	if _, err := Create(dir, "svc", CreateOptions{Module: "example.com/svc", With: with, NoTidy: true}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := FindProject(filepath.Join(dir, "svc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func read(t *testing.T, p *Project, rel string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(p.Root, filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func mustMake(t *testing.T, p *Project, kind, name string, opts MakeOptions) *Report {
+	t.Helper()
+	report, err := Make(p, kind, name, opts)
+	if err != nil {
+		t.Fatalf("make:%s %s: %v", kind, name, err)
+	}
+	return report
+}
 
 func TestNaming(t *testing.T) {
 	cases := []struct{ in, snake, pascal, camel string }{
@@ -44,234 +78,15 @@ func TestParseFields(t *testing.T) {
 	}
 	got := []string{}
 	for _, f := range fields {
-		got = append(got, f.GoName+" "+f.GoType+" "+f.Tag)
+		got = append(got, f.GoName+" "+f.GoType+" "+f.SQLType+" "+f.Tag)
 	}
-	want := "UserID int64 user_id|PaidAt *time.Time paid_at|Meta json.RawMessage meta,type:jsonb,nullzero"
+	want := "UserID int64 BIGINT user_id|PaidAt *time.Time TIMESTAMPTZ paid_at|Meta json.RawMessage JSONB meta,type:jsonb,nullzero"
 	if strings.Join(got, "|") != want {
 		t.Errorf("got %s\nwant %s", strings.Join(got, "|"), want)
 	}
 	for _, bad := range []string{"id:int64", "a:money", "a", "a:int,a:int", "1a:int"} {
 		if _, err := parseFields(bad); err == nil {
 			t.Errorf("parseFields(%q): want an error", bad)
-		}
-	}
-}
-
-// TestGeneratedProjectsBuild creates a project for every --with choice, adds
-// every kind of file, and checks that it builds, vets and passes its tests
-// without importing gortisan. It downloads modules, so -short skips it.
-func TestGeneratedProjectsBuild(t *testing.T) {
-	if testing.Short() {
-		t.Skip("downloads modules")
-	}
-	for _, with := range []string{"all", "", "postgres", "redis", "none"} {
-		name := with
-		if name == "" {
-			name = "default"
-		}
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			if _, err := Create(dir, "demo-svc", CreateOptions{Module: "example.com/demo-svc", With: with}); err != nil {
-				t.Fatal(err)
-			}
-			project, err := FindProject(filepath.Join(dir, "demo-svc", "internal"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if project.Module != "example.com/demo-svc" {
-				t.Fatalf("module = %q", project.Module)
-			}
-			has := func(component string) bool {
-				switch with {
-				case "all":
-					return true
-				case "":
-					return slices.Contains(DefaultComponents, component)
-				}
-				return slices.Contains(strings.Split(with, ","), component)
-			}
-
-			type step struct {
-				kind, name string
-				opts       MakeOptions
-			}
-			steps := []step{
-				{kind: "service", name: "order"},
-				{kind: "handler", name: "v1/order/list"},
-				{kind: "handler", name: "v1/order/get"},
-				{kind: "handler", name: "v2/order/list"}, // a second API version
-				{kind: "handler", name: "v1/user/list"},  // a subject with only a handler
-				{kind: "handler", name: "v1/sales/invoice/list"},
-				{kind: "request", name: "v1/order/create"},
-				{kind: "response", name: "v1/order/detail"},
-				{kind: "validator", name: "order/not_paid"},
-				{kind: "validator", name: "mobile"},                 // no group: package validator
-				{kind: "validator", name: "address/mobile"},         // address.Mobile, "address:mobile"
-				{kind: "validator", name: "sales/order/max_weight"}, // a nested group
-				{kind: "validator", name: "address/mobile"},         // again: kept, the key not added twice
-				{kind: "enum", name: "order/status", opts: MakeOptions{Members: "pending,paid=5,sent"}},
-				{kind: "enum", name: "order/currency", opts: MakeOptions{Type: "string", Members: "irr,usd=USD"}},
-				{kind: "middleware", name: "request_id"},
-				{kind: "client", name: "salam-pay"},
-			}
-			if has("postgres") {
-				steps = append(steps,
-					step{kind: "model", name: "order", opts: MakeOptions{Fields: "user_id:int64,status:string,paid_at:time?,meta:json", SoftDelete: true}},
-					step{kind: "model", name: "tag"},
-					step{kind: "service", name: "tag"}, // after the model: built on the Store
-					step{kind: "handler", name: "v1/tag/list"},
-					step{kind: "test", name: "tag"},            // a service test with a fake Store
-					step{kind: "test", name: "v1/tag/list"},    // a handler test
-					step{kind: "model", name: "sales/payment"}, // a grouped subject
-					step{kind: "service", name: "sales/payment"},
-					step{kind: "handler", name: "v1/sales/payment/get"},
-				)
-			}
-			if has("redis") {
-				steps = append(steps, step{kind: "cache", name: "order/count", opts: MakeOptions{Type: "int64"}})
-				if has("postgres") {
-					steps = append(steps, step{kind: "cache", name: "order/detail", opts: MakeOptions{Type: "*Order"}})
-				}
-			}
-			for _, s := range steps {
-				if _, err := Make(project, s.kind, s.name, s.opts); err != nil {
-					t.Fatalf("make %s %s: %v", s.kind, s.name, err)
-				}
-			}
-
-			// Kinds that need a missing component must say so instead of writing broken code.
-			missing := map[string]string{"model": "postgres", "cache": "redis"}
-			for kind, component := range missing {
-				if !has(component) {
-					if _, err := Make(project, kind, "order/x", MakeOptions{}); err == nil {
-						t.Errorf("make %s without %s: want an error", kind, component)
-					}
-				}
-			}
-
-			routes, err := Routes(project)
-			if err != nil || len(routes) < 2 || routes[0].Path != "/ping" {
-				t.Fatalf("route:list = %+v, %v", routes, err)
-			}
-
-			for _, args := range [][]string{{"mod", "tidy"}, {"vet", "./..."}, {"test", "./..."}} {
-				cmd := exec.Command("go", args...)
-				cmd.Dir = project.Root
-				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("go %s: %v\n%s", strings.Join(args, " "), err, out)
-				}
-			}
-			assertNoGortisan(t, project.Root)
-			if has("postgres") {
-				assertORMStandalone(t, project)
-			}
-		})
-	}
-}
-
-func assertNoGortisan(t *testing.T, root string) {
-	t.Helper()
-	gomod, err := os.ReadFile(filepath.Join(root, "go.mod"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(gomod), "gortisan") {
-		t.Errorf("go.mod mentions gortisan:\n%s", gomod)
-	}
-	cmd := exec.Command("go", "list", "-deps", "./...")
-	cmd.Dir = root
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(out), "gortisan") {
-		t.Errorf("the project depends on gortisan:\n%s", out)
-	}
-}
-
-// assertORMStandalone checks that internal/platform/database/orm could become
-// a module of its own: it imports nothing of the project and only bun, pgx
-// and the standard library from outside it.
-func assertORMStandalone(t *testing.T, p *Project) {
-	t.Helper()
-	orm := p.Module + "/internal/platform/database/orm"
-	cmd := exec.Command("go", "list", "-f", "{{range .Imports}}{{.}} {{end}}", "./internal/platform/database/orm")
-	cmd.Dir = p.Root
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, imp := range strings.Fields(string(out)) {
-		first, _, _ := strings.Cut(imp, "/")
-		std := !strings.Contains(first, ".")
-		allowed := strings.HasPrefix(imp, "github.com/uptrace/bun") || strings.HasPrefix(imp, "github.com/jackc/pgx/v5")
-		if (!std && !allowed) || strings.HasPrefix(imp, p.Module+"/") {
-			t.Errorf("%s imports %s; it may import only bun, pgx and the standard library", orm, imp)
-		}
-	}
-}
-
-func TestMakeKeepsExistingFiles(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/x\n\ngo 1.26\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	project, err := FindProject(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Make(project, "service", "order", MakeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(root, "internal", "domain", "order", "service.go")
-	if err := os.WriteFile(path, []byte("package order // edited\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	report, err := Make(project, "service", "order", MakeOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(report.Skipped) != 1 || len(report.Created) != 0 {
-		t.Fatalf("report = %+v, want the file skipped", report)
-	}
-	if content, _ := os.ReadFile(path); !strings.Contains(string(content), "edited") {
-		t.Fatal("make overwrote an edited file without --force")
-	}
-	if _, err := Make(project, "service", "order", MakeOptions{Force: true}); err != nil {
-		t.Fatal(err)
-	}
-	if content, _ := os.ReadFile(path); strings.Contains(string(content), "edited") {
-		t.Fatal("--force did not overwrite")
-	}
-}
-
-func TestCreateWritesPinnedWrappers(t *testing.T) {
-	for version, want := range map[string]string{
-		"v0.2.0":   ToolPackage + "@v0.2.0",
-		"(devel)":  ToolPackage + "@latest",
-		"":         ToolPackage + "@latest",
-		"v1+dirty": ToolPackage + "@latest",
-	} {
-		dir := t.TempDir()
-		if _, err := Create(dir, "svc", CreateOptions{With: "none", NoTidy: true, Version: version}); err != nil {
-			t.Fatal(err)
-		}
-		for _, name := range []string{"gortisan", "gortisan.bat", "gortisan.ps1"} {
-			content, err := os.ReadFile(filepath.Join(dir, "svc", name))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(content), "go run "+want) {
-				t.Errorf("version %q: %s does not run %s:\n%s", version, name, want, content)
-			}
-		}
-		sh, _ := os.ReadFile(filepath.Join(dir, "svc", "gortisan"))
-		if strings.Contains(string(sh), "\r") || !strings.HasPrefix(string(sh), "#!/usr/bin/env sh\n") {
-			t.Errorf("the sh script must use LF line endings:\n%q", sh)
-		}
-		bat, _ := os.ReadFile(filepath.Join(dir, "svc", "gortisan.bat"))
-		if !strings.Contains(string(bat), "\r\n") {
-			t.Errorf("the bat script should use CRLF line endings:\n%q", bat)
 		}
 	}
 }
@@ -299,73 +114,267 @@ func TestParseMembers(t *testing.T) {
 	}
 }
 
-func TestSplitNames(t *testing.T) {
+func TestParseFeature(t *testing.T) {
 	f, item, err := splitItem("enum", "sales/order_item/status")
 	if err != nil || f.Path != "sales/orderitem" || f.Pkg != "orderitem" || f.Parent != "sales" || f.Type != "OrderItem" || item != "status" {
 		t.Fatalf("splitItem: %+v %q %v", f, item, err)
 	}
-	if f.Dir() != "internal/domain/sales/orderitem" || f.Label() != "sales.orderitem" {
-		t.Fatalf("dir %q label %q", f.Dir(), f.Label())
+	if f.Dir() != "internal/sales/orderitem" || f.Label() != "sales.orderitem" || f.Route() != "/sales/order-items" {
+		t.Fatalf("dir %q label %q route %q", f.Dir(), f.Label(), f.Route())
 	}
-	version, f, item, err := splitAPI("handler", "v2/sales/order/list")
-	if err != nil || version != "v2" || f.Path != "sales/order" || item != "list" {
-		t.Fatalf("splitAPI: %q %+v %q %v", version, f, item, err)
-	}
-	if dir, pkg := apiPackage(version, f); dir != "internal/api/v2/sales/orders" || pkg != "orders" {
-		t.Fatalf("apiPackage = %q %q", dir, pkg)
-	}
-	for _, bad := range []string{"user/list", "x1/user/list", "v1/list", "v1/user/1x", "v1/type/list"} {
-		if _, _, _, err := splitAPI("handler", bad); err == nil {
-			t.Errorf("splitAPI(%q): want an error", bad)
+	for _, bad := range []string{"", "server", "platform/x", "app", "type", "1x"} {
+		if _, err := parseFeature(bad); err == nil {
+			t.Errorf("parseFeature(%q): want an error", bad)
 		}
 	}
 }
 
 func TestRouteFor(t *testing.T) {
 	for action, want := range map[string]string{
-		"List": "GET /users", "Get": "GET /users/:id", "Create": "POST /users",
-		"Update": "PUT /users/:id", "Delete": "DELETE /users/:id", "ResetPassword": "GET /users/reset-password",
+		"List": "GET ", "Get": "GET /:id", "Create": "POST ",
+		"Update": "PUT /:id", "Delete": "DELETE /:id", "ResetPassword": "GET /reset-password",
 	} {
-		if m, p := routeFor(action, "/users"); m+" "+p != want {
-			t.Errorf("routeFor(%q) = %s %s, want %s", action, m, p, want)
+		if m, p := routeFor(action); m+" "+p != want {
+			t.Errorf("routeFor(%q) = %q, want %q", action, m+" "+p, want)
 		}
 	}
 }
 
-func TestHandlerAppendsToFeatureFiles(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/x\n\ngo 1.26\n"), 0o644); err != nil {
-		t.Fatal(err)
+func TestCreateWritesSettings(t *testing.T) {
+	p := newProject(t, "postgres,redis,swagger")
+	if p.Settings == nil || p.Settings.Layout != Layout || p.Settings.BasePath != "/api" {
+		t.Fatalf("settings = %+v", p.Settings)
 	}
-	p, _ := FindProject(root)
-	for _, name := range []string{"v1/user/list", "v1/user/get"} {
-		if _, err := Make(p, "handler", name, MakeOptions{}); err != nil {
+	if !slices.Equal(p.Settings.With, []string{"postgres", "redis", "swagger"}) {
+		t.Fatalf("with = %v", p.Settings.With)
+	}
+	if !p.Has("postgres") || p.Has("migrations") {
+		t.Fatal("Has does not follow .gortisan.json")
+	}
+	for _, rel := range []string{"internal/migrations", "cmd/migrate.go", "internal/app/migrate.go"} {
+		if p.exists(rel) {
+			t.Errorf("%s written without migrations", rel)
+		}
+	}
+	if strings.Contains(read(t, p, "cmd/root.go"), "migrateCommand") {
+		t.Error("cmd/root.go lists migrate without migrations")
+	}
+
+	// A project without .gortisan.json, or with a newer layout, is refused.
+	p.Settings = nil
+	if err := p.Check(); err == nil {
+		t.Error("a project without .gortisan.json must be refused")
+	}
+	p.Settings = &Settings{Layout: Layout + 1}
+	if err := p.Check(); err == nil || !strings.Contains(err.Error(), "newer") {
+		t.Errorf("a newer layout: err = %v", err)
+	}
+	if _, err := Create(t.TempDir(), "x", CreateOptions{With: "migrations", NoTidy: true}); err == nil {
+		t.Error("migrations without postgres must be refused")
+	}
+}
+
+func TestCreateWritesPinnedWrappers(t *testing.T) {
+	for version, want := range map[string]string{
+		"v0.2.0":   ToolPackage + "@v0.2.0",
+		"(devel)":  ToolPackage + "@latest",
+		"":         ToolPackage + "@latest",
+		"v1+dirty": ToolPackage + "@latest",
+	} {
+		dir := t.TempDir()
+		if _, err := Create(dir, "svc", CreateOptions{With: "none", NoTidy: true, Version: version}); err != nil {
 			t.Fatal(err)
 		}
-	}
-	read := func(name string) string {
-		b, _ := os.ReadFile(filepath.Join(root, "internal", "api", "v1", "users", name))
-		return string(b)
-	}
-	for file, wants := range map[string][]string{
-		"handler.go":  {"type Handler struct", "func (h *Handler) List(", "func (h *Handler) Get("},
-		"request.go":  {"type ListRequest struct", "type GetRequest struct"},
-		"response.go": {"type ListResponse struct", "type GetResponse struct"},
-	} {
-		for _, want := range wants {
-			if !strings.Contains(read(file), want) {
-				t.Errorf("%s lacks %q:\n%s", file, want, read(file))
+		for _, name := range scripts {
+			content, err := os.ReadFile(filepath.Join(dir, "svc", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(content), "go run "+want) {
+				t.Errorf("version %q: %s does not run %s:\n%s", version, name, want, content)
 			}
 		}
+		sh, _ := os.ReadFile(filepath.Join(dir, "svc", "gortisan"))
+		if strings.Contains(string(sh), "\r") || !strings.HasPrefix(string(sh), "#!/usr/bin/env sh\n") {
+			t.Errorf("the sh script must use LF line endings:\n%q", sh)
+		}
 	}
-	// Making the same handler again changes nothing and says so.
-	before := read("handler.go")
-	report, err := Make(p, "handler", "v1/user/list", MakeOptions{})
+}
+
+func TestUpgrade(t *testing.T) {
+	p := newProject(t, "none")
+	report, err := Upgrade(p, "v1.4.0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if read("handler.go") != before || len(report.Skipped) != 3 {
-		t.Fatalf("second make:handler v1/user/list changed files or did not report them: %+v", report)
+	for _, name := range scripts {
+		if !strings.Contains(read(t, p, name), ToolPackage+"@v1.4.0") {
+			t.Errorf("%s still pins the old version:\n%s", name, read(t, p, name))
+		}
+	}
+	again, _ := FindProject(p.Root)
+	if again.Settings.Version != "v1.4.0" || len(report.Updated) != 4 {
+		t.Fatalf("settings %+v, report %+v", again.Settings, report)
+	}
+	if _, err := Upgrade(p, "1.4"); err == nil {
+		t.Error("a version without v must be refused")
+	}
+}
+
+func TestFeatureIsWired(t *testing.T) {
+	p := newProject(t, "")
+	report := mustMake(t, p, "feature", "user", MakeOptions{Fields: "mobile:string", SoftDelete: true})
+	for _, rel := range []string{"user.go", "service.go", "postgres.go", "handler.go", "dto.go", "routes.go", "service_test.go"} {
+		if !p.exists("internal/user/" + rel) {
+			t.Errorf("internal/user/%s was not written", rel)
+		}
+	}
+	migration := ""
+	for _, c := range report.Created {
+		if strings.HasSuffix(c, "_create_users.sql") {
+			migration = c
+		}
+	}
+	if migration == "" || !strings.Contains(read(t, p, migration), "deleted_at TIMESTAMPTZ") {
+		t.Fatalf("no create-table migration with deleted_at in %v", report.Created)
+	}
+	serve := read(t, p, appServe)
+	for _, want := range []string{`"example.com/svc/internal/user"`, "userService := user.NewService(user.NewPostgres(db))", "user.RegisterRoutes(api, user.NewHandler(userService))"} {
+		if !strings.Contains(serve, want) {
+			t.Errorf("%s lacks %q:\n%s", appServe, want, serve)
+		}
+	}
+
+	mustMake(t, p, "handler", "user/list", MakeOptions{})
+	mustMake(t, p, "handler", "user/get", MakeOptions{})
+	routes := read(t, p, "internal/user/routes.go")
+	for _, want := range []string{`g.GET("", h.List)`, `g.GET("/:id", h.Get)`} {
+		if !strings.Contains(routes, want) {
+			t.Errorf("routes.go lacks %q:\n%s", want, routes)
+		}
+	}
+	if strings.Contains(routes, "_ = g") {
+		t.Errorf("routes.go kept its placeholder:\n%s", routes)
+	}
+	handler := read(t, p, "internal/user/handler.go")
+	for _, want := range []string{"func (h *Handler) List(", "@Router\t\t/users [get]", "@Router\t\t/users/{id} [get]", "@Param\t\tid\tpath"} {
+		if !strings.Contains(handler, want) {
+			t.Errorf("handler.go lacks %q:\n%s", want, handler)
+		}
+	}
+	dto := read(t, p, "internal/user/dto.go")
+	for _, want := range []string{"type ListRequest struct", "type GetResponse struct"} {
+		if !strings.Contains(dto, want) {
+			t.Errorf("dto.go lacks %q", want)
+		}
+	}
+
+	// Making the same handler again changes nothing and says so.
+	before := read(t, p, "internal/user/handler.go") + read(t, p, "internal/user/routes.go")
+	again := mustMake(t, p, "handler", "user/list", MakeOptions{})
+	if read(t, p, "internal/user/handler.go")+read(t, p, "internal/user/routes.go") != before || len(again.Skipped) != 3 {
+		t.Fatalf("a second make:handler user/list changed files or did not report them: %+v", again)
+	}
+	// A feature is not made twice without --force.
+	if _, err := Make(p, "feature", "user", MakeOptions{}); err == nil {
+		t.Error("make:feature on an existing feature must be refused")
+	}
+
+	found, err := Routes(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range found {
+		got = append(got, r.Method+" "+r.Path+" "+r.Handler)
+	}
+	for _, want := range []string{"GET /ping server.Health.Ping", "GET /swagger/* echoSwagger.WrapHandler", "GET /api/users user.Handler.List", "GET /api/users/:id user.Handler.Get"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("route:list lacks %q: %v", want, got)
+		}
+	}
+}
+
+func TestMakeNeedsItsComponent(t *testing.T) {
+	p := newProject(t, "none")
+	for kind, name := range map[string]string{"cache": "user/count", "migration": "add_index"} {
+		if _, err := Make(p, kind, name, MakeOptions{}); err == nil || !strings.Contains(err.Error(), "./gortisan add") {
+			t.Errorf("make:%s without its component: err = %v", kind, err)
+		}
+	}
+	// Without postgres a feature has no storage and is wired with a nil Repository.
+	report := mustMake(t, p, "feature", "note", MakeOptions{})
+	if p.exists("internal/note/postgres.go") || !strings.Contains(read(t, p, appServe), "note.NewService(nil") {
+		t.Errorf("a feature without postgres: %+v", report)
+	}
+}
+
+func TestMigrationsInTheSameSecondGetDistinctVersions(t *testing.T) {
+	p := newProject(t, "postgres,migrations")
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	for _, name := range []string{"first", "second", "third"} {
+		mustMake(t, p, "migration", name, MakeOptions{Now: now})
+	}
+	files, _ := filepath.Glob(filepath.Join(p.Root, "internal", "migrations", "*.sql"))
+	seen := map[string]bool{}
+	for _, f := range files {
+		version, _, _ := strings.Cut(filepath.Base(f), "_")
+		if seen[version] {
+			t.Fatalf("version %s used twice: %v", version, files)
+		}
+		seen[version] = true
+	}
+	if len(seen) != 4 { // the three, and the first migration create writes
+		t.Fatalf("want 4 versions, got %v", files)
+	}
+}
+
+func TestMakeKeepsExistingFiles(t *testing.T) {
+	p := newProject(t, "none")
+	mustMake(t, p, "middleware", "request_id", MakeOptions{})
+	path := filepath.Join(p.Root, "internal", "server", "middleware", "request_id.go")
+	if err := os.WriteFile(path, []byte("package middleware // edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := mustMake(t, p, "middleware", "request_id", MakeOptions{})
+	if len(report.Skipped) != 1 || len(report.Created) != 0 {
+		t.Fatalf("report = %+v, want the file skipped", report)
+	}
+	if content, _ := os.ReadFile(path); !strings.Contains(string(content), "edited") {
+		t.Fatal("make overwrote an edited file without --force")
+	}
+	mustMake(t, p, "middleware", "request_id", MakeOptions{Force: true})
+	if content, _ := os.ReadFile(path); strings.Contains(string(content), "edited") {
+		t.Fatal("--force did not overwrite")
+	}
+}
+
+func TestMakeValidator(t *testing.T) {
+	p := newProject(t, "none")
+	for _, name := range []string{"address/mobile", "mobile", "sales/order/max_weight", "address/mobile"} {
+		mustMake(t, p, "validator", name, MakeOptions{})
+	}
+	for file, want := range map[string]string{
+		"internal/server/validator/address/mobile.go":         `package address`,
+		"internal/server/validator/mobile.go":                 `package validator`,
+		"internal/server/validator/sales/order/max_weight.go": `Code: "sales.order:max-weight"`,
+	} {
+		if !strings.Contains(read(t, p, file), want) {
+			t.Errorf("%s: want %q", file, want)
+		}
+	}
+	src := read(t, p, langPath)
+	var phrases map[string]string
+	if err := json.Unmarshal([]byte(src), &phrases); err != nil {
+		t.Fatalf("fa.json is not valid JSON: %v\n%s", err, src)
+	}
+	for _, key := range []string{"general:invalid-data", "address:mobile", "validation:mobile", "sales.order:max-weight"} {
+		if phrases[key] == "" {
+			t.Errorf("fa.json has no %q:\n%s", key, src)
+		}
+	}
+	if n := strings.Count(src, `"address:mobile"`); n != 1 {
+		t.Errorf("address:mobile is in fa.json %d times", n)
 	}
 }
 
@@ -382,8 +391,117 @@ func TestCreateRefusesNonEmptyDir(t *testing.T) {
 	}
 }
 
-// TestAddComponent adds redis and postgres to a project created with none.
-// It runs go get and go mod tidy, so -short skips it.
+// TestGeneratedProjectsBuild creates a project for several --with choices,
+// adds every kind of file, and checks that it builds, vets and passes its
+// tests — the dependency rules included — without importing gortisan. It
+// downloads modules, so -short skips it.
+func TestGeneratedProjectsBuild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("downloads modules")
+	}
+	for _, with := range []string{"all", "postgres,redis,swagger", "postgres,migrations", "redis", "swagger", "none"} {
+		t.Run(with, func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := Create(dir, "demo-svc", CreateOptions{Module: "example.com/demo-svc", With: with}); err != nil {
+				t.Fatal(err)
+			}
+			p, err := FindProject(filepath.Join(dir, "demo-svc", "internal"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			type step struct {
+				kind, name string
+				opts       MakeOptions
+			}
+			steps := []step{
+				{kind: "feature", name: "order", opts: MakeOptions{Fields: "user_id:int64,status:string,paid_at:time?,meta:json", SoftDelete: true}},
+				{kind: "handler", name: "order/list"},
+				{kind: "handler", name: "order/get"},
+				{kind: "handler", name: "order/create"},
+				{kind: "handler", name: "order/mark_paid"},
+				{kind: "test", name: "order"},
+				{kind: "test", name: "order/get"},
+				{kind: "feature", name: "sales/payment"}, // a grouped feature
+				{kind: "handler", name: "sales/payment/get"},
+				{kind: "enum", name: "order/status", opts: MakeOptions{Members: "pending,paid=5,sent"}},
+				{kind: "enum", name: "order/currency", opts: MakeOptions{Type: "string", Members: "irr,usd=USD"}},
+				{kind: "validator", name: "address/mobile"},
+				{kind: "validator", name: "mobile"},
+				{kind: "middleware", name: "request_id"},
+				{kind: "client", name: "wallet"},
+				{kind: "external", name: "bale-messenger"},
+			}
+			if p.Has("redis") {
+				steps = append(steps, step{kind: "cache", name: "order/count", opts: MakeOptions{Type: "int64"}},
+					step{kind: "cache", name: "order/detail", opts: MakeOptions{Type: "*Order"}})
+			}
+			if p.Has("migrations") {
+				steps = append(steps, step{kind: "migration", name: "add_index_to_orders"})
+			}
+			for _, s := range steps {
+				mustMake(t, p, s.kind, s.name, s.opts)
+			}
+			if _, err := Routes(p); err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{{"mod", "tidy"}, {"vet", "./..."}, {"test", "./..."}} {
+				cmd := exec.Command("go", args...)
+				cmd.Dir = p.Root
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("go %s: %v\n%s", strings.Join(args, " "), err, out)
+				}
+			}
+			assertNoGortisan(t, p.Root)
+			if p.Has("postgres") {
+				assertORMStandalone(t, p)
+			}
+		})
+	}
+}
+
+func assertNoGortisan(t *testing.T, root string) {
+	t.Helper()
+	gomod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(gomod), "gortisan") {
+		t.Errorf("go.mod mentions gortisan:\n%s", gomod)
+	}
+	cmd := exec.Command("go", "list", "-deps", "./...")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "gortisan") {
+		t.Errorf("the project depends on gortisan:\n%s", out)
+	}
+}
+
+// assertORMStandalone checks that internal/platform/orm could become a
+// module of its own: it imports nothing of the project and only bun, pgx and
+// the standard library from outside it.
+func assertORMStandalone(t *testing.T, p *Project) {
+	t.Helper()
+	cmd := exec.Command("go", "list", "-f", "{{range .Imports}}{{.}} {{end}}", "./"+ormDir)
+	cmd.Dir = p.Root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, imp := range strings.Fields(string(out)) {
+		first, _, _ := strings.Cut(imp, "/")
+		std := !strings.Contains(first, ".")
+		allowed := strings.HasPrefix(imp, "github.com/uptrace/bun") || strings.HasPrefix(imp, "github.com/jackc/pgx/v5")
+		if (!std && !allowed) || strings.HasPrefix(imp, p.Module+"/") {
+			t.Errorf("%s imports %s; it may import only bun, pgx and the standard library", ormDir, imp)
+		}
+	}
+}
+
+// TestAddComponent adds every component to a project created with none. It
+// runs go get and go mod tidy, so -short skips it.
 func TestAddComponent(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads modules")
@@ -396,7 +514,10 @@ func TestAddComponent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, component := range []string{"redis", "postgres"} {
+	if _, err := Add(p, "migrations"); err == nil {
+		t.Error("migrations before postgres must be refused")
+	}
+	for _, component := range []string{"redis", "postgres", "migrations", "swagger"} {
 		report, err := Add(p, component)
 		if err != nil {
 			t.Fatalf("add %s: %v", component, err)
@@ -407,85 +528,36 @@ func TestAddComponent(t *testing.T) {
 		if _, err := Add(p, component); err == nil {
 			t.Errorf("adding %s twice: want an error", component)
 		}
+		// Do what the printed hint asks for config.go, as a user would.
+		if field := map[string]string{"redis": "Redis", "postgres": "Postgres"}[component]; field != "" {
+			config := read(t, p, "internal/config/config.go")
+			config = strings.Replace(config, "type Config struct {", "type Config struct {\n\t"+field+" "+field, 1)
+			config = strings.Replace(config, "cfg := Config{", "cfg := Config{\n\t\t"+field+": r."+component+"(),", 1)
+			if err := os.WriteFile(filepath.Join(p.Root, "internal", "config", "config.go"), []byte(config), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	for _, rel := range []string{"internal/platform/cache/redis.go", "internal/platform/config/redis.go", "internal/platform/database/orm/orm.go", "internal/platform/config/postgres.go"} {
+	again, _ := FindProject(p.Root)
+	if !slices.Equal(again.Settings.With, Components) {
+		t.Errorf(".gortisan.json with = %v", again.Settings.With)
+	}
+	for _, rel := range []string{"internal/platform/redis.go", "internal/config/redis.go", "internal/platform/orm/orm.go", "internal/config/postgres.go", "cmd/migrate.go", "docs/docs.go"} {
 		if !p.exists(rel) {
 			t.Errorf("%s was not written", rel)
 		}
 	}
-	gomod, _ := os.ReadFile(filepath.Join(p.Root, "go.mod"))
-	env, _ := os.ReadFile(filepath.Join(p.Root, ".env.example"))
-	if !strings.Contains(string(gomod), "github.com/jackc/pgx/v5") || !strings.Contains(string(gomod), "github.com/redis/go-redis/v9") {
-		t.Errorf("go.mod lacks the modules:\n%s", gomod)
-	}
-	if !strings.Contains(string(env), "POSTGRES_HOST") || !strings.Contains(string(env), "REDIS_ADDR") {
+	env := read(t, p, ".env.example")
+	if !strings.Contains(env, "POSTGRES_HOST") || !strings.Contains(env, "REDIS_ADDR") || !strings.Contains(env, "RUN_MIGRATIONS") {
 		t.Errorf(".env.example lacks the settings:\n%s", env)
 	}
-	// The platform packages themselves build before any wiring.
-	cmd := exec.Command("go", "vet", "./internal/platform/...")
+	// The project still builds before the hinted lines are added by hand.
+	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = p.Root
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("go vet ./internal/platform/...: %v\n%s", err, out)
+		t.Fatalf("go vet ./...: %v\n%s", err, out)
 	}
 	if _, err := Add(p, "kafka"); err == nil {
 		t.Error("an unknown component must be rejected")
-	}
-}
-
-func TestMakeValidator(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/x\n\ngo 1.26\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	project, err := FindProject(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"address/mobile", "mobile", "sales/order/max_weight", "address/mobile"} {
-		if _, err := Make(project, "validator", name, MakeOptions{}); err != nil {
-			t.Fatalf("make:validator %s: %v", name, err)
-		}
-	}
-	for file, want := range map[string]string{
-		"internal/api/validator/address/mobile.go":         `package address`,
-		"internal/api/validator/mobile.go":                 `package validator`,
-		"internal/api/validator/sales/order/max_weight.go": `Code: "sales.order:max-weight"`,
-		"internal/platform/trans/trans.go":                 `func Message(`,
-		"internal/platform/problem/problem.go":             `application/problem+json`,
-		"internal/platform/validate/validate.go":           `type Base struct`,
-	} {
-		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
-		if err != nil || !strings.Contains(string(content), want) {
-			t.Errorf("%s: want %q, err %v", file, want, err)
-		}
-	}
-
-	src, err := os.ReadFile(filepath.Join(root, "internal", "platform", "trans", "lang", "fa.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var phrases map[string]string
-	if err := json.Unmarshal(src, &phrases); err != nil {
-		t.Fatalf("fa.json is not valid JSON: %v\n%s", err, src)
-	}
-	for _, key := range []string{"general:invalid-data", "address:mobile", "validation:mobile", "sales.order:max-weight"} {
-		if phrases[key] == "" {
-			t.Errorf("fa.json has no %q:\n%s", key, src)
-		}
-	}
-	if n := strings.Count(string(src), `"address:mobile"`); n != 1 {
-		t.Errorf("address:mobile is in fa.json %d times", n)
-	}
-	if !strings.HasSuffix(string(src), "\"\n}\n") || strings.Index(string(src), `"general:max"`) > strings.Index(string(src), `"address:mobile"`) {
-		t.Errorf("keys must be added at the end, keeping the file:\n%s", src)
-	}
-
-	// A validate.go from before validate.Base must be replaced, not built on.
-	old := filepath.Join(root, "internal", "platform", "validate", "validate.go")
-	if err := os.WriteFile(old, []byte("package validate\n\ntype Rule interface{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Make(project, "validator", "address/postal_code", MakeOptions{}); err == nil || !strings.Contains(err.Error(), "older gortisan") {
-		t.Fatalf("an old validate.go: err = %v", err)
 	}
 }

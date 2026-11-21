@@ -8,13 +8,21 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Components are the optional pieces `create --with` picks.
-var Components = []string{"postgres", "redis"}
+var Components = []string{"postgres", "redis", "migrations", "swagger"}
 
 // DefaultComponents are what create includes without --with.
-var DefaultComponents = []string{"postgres", "redis"}
+var DefaultComponents = Components
+
+// DefaultBasePath is where features are mounted unless BASE_PATH says otherwise.
+const DefaultBasePath = "/api"
+
+// SwagVersion is the swag command `gortisan swag` runs; it matches the swag
+// module generated projects require.
+const SwagVersion = "v1.16.6"
 
 // CreateOptions configure Create.
 type CreateOptions struct {
@@ -28,20 +36,79 @@ type CreateOptions struct {
 	// Version is the gortisan version the project's ./gortisan scripts run;
 	// "latest" when empty.
 	Version string
+	// Now stamps the first migration; time.Now when zero.
+	Now time.Time
 }
 
-// ToolPackage is what the project's ./gortisan scripts `go run`.
+// ToolPackage is what the project's ./gortisan scripts `go run`. Moving
+// gortisan to another repository changes this constant and go.mod only.
 const ToolPackage = "github.com/alinemone/gortisan/cmd/gortisan"
 
 type projectData struct {
-	Name     string
-	Module   string
-	Title    string
-	Postgres bool
-	Redis    bool
-	Tool     string // ToolPackage@version
-	Version  string // the API version a routes file is for, e.g. v1
+	Name        string
+	Module      string
+	Title       string
+	Postgres    bool
+	Redis       bool
+	Migrations  bool
+	Swagger     bool
+	BasePath    string
+	Tool        string // ToolPackage@version
+	SwagVersion string
 }
+
+func newProjectData(name, module string, with map[string]bool, version string) projectData {
+	return projectData{
+		Name:        name,
+		Module:      module,
+		Title:       title(name),
+		Postgres:    with["postgres"],
+		Redis:       with["redis"],
+		Migrations:  with["migrations"],
+		Swagger:     with["swagger"],
+		BasePath:    DefaultBasePath,
+		Tool:        ToolPackage + "@" + version,
+		SwagVersion: SwagVersion,
+	}
+}
+
+// baseOutputs are the files of every project.
+var baseOutputs = []output{
+	{"go.mod", "create/go.mod.tmpl"},
+	{"main.go", "create/main.go.tmpl"},
+	{"cmd/root.go", "create/cmd_root.go.tmpl"},
+	{"cmd/serve.go", "create/cmd_serve.go.tmpl"},
+	{"internal/app/serve.go", "create/app_serve.go.tmpl"},
+	{"internal/config/config.go", "create/config.go.tmpl"},
+	{"internal/server/server.go", "create/server.go.tmpl"},
+	{"internal/server/server_test.go", "create/server_test.go.tmpl"},
+	{"internal/server/health.go", "create/server_health.go.tmpl"},
+	{"internal/server/response/problem.go", "create/response_problem.go.tmpl"},
+	{validatePath, "create/validate.go.tmpl"},
+	{"internal/server/validate/validate_test.go", "create/validate_test.go.tmpl"},
+	{"internal/platform/trans/trans.go", "create/trans.go.tmpl"},
+	{"internal/platform/trans/trans_test.go", "create/trans_test.go.tmpl"},
+	{langPath, "create/lang_fa.json.tmpl"},
+	{"tests/arch_test.go", "create/arch_test.go.tmpl"},
+	{"deploy/Dockerfile", "create/deploy_Dockerfile.tmpl"},
+	{"deploy/entrypoint.sh", "create/entrypoint.sh.tmpl"},
+	{"AGENTS.md", "create/AGENTS.md.tmpl"},
+	{"CLAUDE.md", "create/CLAUDE.md.tmpl"},
+	{".agents/skills/gortisan/SKILL.md", "create/skill.md.tmpl"},
+	{"README.md", "create/README.md.tmpl"},
+	{"Makefile", "create/Makefile.tmpl"},
+	{".env.example", "create/env.example.tmpl"},
+	{".gitignore", "create/gitignore.tmpl"},
+	{".gitattributes", "create/gitattributes.tmpl"},
+	{".dockerignore", "create/dockerignore.tmpl"},
+	{".aiignore", "create/aiignore.tmpl"},
+	{"gortisan", "create/gortisan.sh.tmpl"},
+	{"gortisan.bat", "create/gortisan.bat.tmpl"},
+	{"gortisan.ps1", "create/gortisan.ps1.tmpl"},
+}
+
+// executables are written with the executable bit.
+var executables = []string{"gortisan", "deploy/entrypoint.sh"}
 
 // Create writes a new project into dir/name.
 func Create(dir, name string, opts CreateOptions) (*Report, error) {
@@ -65,50 +132,39 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		return report, err
 	}
 
-	data := projectData{
-		Name:     name,
-		Module:   module,
-		Title:    title(name),
-		Postgres: with["postgres"],
-		Redis:    with["redis"],
-		Tool:     ToolPackage + "@" + toolVersion(opts.Version),
-		Version:  "v1",
+	version := toolVersion(opts.Version)
+	data := newProjectData(name, module, with, version)
+	outputs := slices.Clone(baseOutputs)
+	for _, c := range Components {
+		if with[c] {
+			outputs = append(outputs, componentOutputs(c)...)
+		}
 	}
-
-	outputs := []output{
-		{"go.mod", "create/go.mod.tmpl"},
-		{"cmd/api/main.go", "create/main.go.tmpl"},
-		{"tests/arch_test.go", "create/arch_test.go.tmpl"},
-		{"internal/api/router.go", "create/api_router.go.tmpl"},
-		{"internal/api/v1/routes.go", "create/version_routes.go.tmpl"},
-		{"internal/platform/config/config.go", "create/config.go.tmpl"},
-		{"internal/platform/server/server.go", "create/server.go.tmpl"},
-		{"internal/platform/server/server_test.go", "create/server_test.go.tmpl"},
-		{"internal/platform/health/health.go", "create/health.go.tmpl"},
-		{".env.example", "create/env.example.tmpl"},
-		{".gitignore", "create/gitignore.tmpl"},
-		{"Dockerfile", "create/Dockerfile.tmpl"},
-		{"Makefile", "create/Makefile.tmpl"},
-		{"README.md", "create/README.md.tmpl"},
-		{".gitattributes", "create/gitattributes.tmpl"},
-		{"gortisan", "create/gortisan.sh.tmpl"},
-		{"gortisan.bat", "create/gortisan.bat.tmpl"},
-		{"gortisan.ps1", "create/gortisan.ps1.tmpl"},
-	}
-	outputs = append(outputs, validateOutputs...)
-	if data.Postgres {
-		outputs = append(outputs, componentOutputs("postgres")...)
-	}
-	if data.Redis {
-		outputs = append(outputs, componentOutputs("redis")...)
-	}
-
 	if err := renderAll(root, outputs, data, false, report); err != nil {
 		return report, err
 	}
-	if err := os.Chmod(filepath.Join(root, "gortisan"), 0o755); err != nil {
+	if with["migrations"] {
+		// The embedded directory must not be empty, or the project does not build.
+		first := migrationsDir + "/" + migrationStamp(opts.Now) + "_init.sql"
+		if err := renderAll(root, []output{{first, "create/migration_init.sql.tmpl"}}, data, false, report); err != nil {
+			return report, err
+		}
+	}
+	for _, rel := range executables {
+		if err := os.Chmod(filepath.Join(root, filepath.FromSlash(rel)), 0o755); err != nil {
+			return report, err
+		}
+	}
+	settings := &Settings{Layout: Layout, Version: version, BasePath: data.BasePath}
+	for _, c := range Components {
+		if with[c] {
+			settings.With = append(settings.With, c)
+		}
+	}
+	if err := writeSettings(root, settings); err != nil {
 		return report, err
 	}
+	report.Created = append(report.Created, SettingsFile)
 
 	if opts.NoTidy {
 		report.next("cd %s && go mod tidy", name)
@@ -116,8 +172,8 @@ func Create(dir, name string, opts CreateOptions) (*Report, error) {
 		report.next("go mod tidy failed, run it yourself in %s:\n%s", name, strings.TrimSpace(out))
 	}
 	report.next("cd %s && cp .env.example .env", name)
-	report.next("./gortisan run   # or go run ./cmd/api; serves on PORT (8000): /ping, /health")
-	report.next("./gortisan make:model user, make:service user, make:handler v1/user/list   # gortisan.bat / gortisan.ps1 on Windows")
+	report.next("./gortisan run   # or: go run . serve — serves on PORT (8000), features under %s", data.BasePath)
+	report.next("./gortisan make:feature user   # gortisan.bat / gortisan.ps1 on Windows")
 	return report, nil
 }
 
@@ -137,21 +193,22 @@ func parseWith(value string) (map[string]bool, error) {
 		for _, c := range DefaultComponents {
 			with[c] = true
 		}
-		return with, nil
 	case "all":
 		for _, c := range Components {
 			with[c] = true
 		}
-		return with, nil
 	case "none":
-		return with, nil
-	}
-	for _, part := range strings.Split(value, ",") {
-		part = strings.TrimSpace(part)
-		if !slices.Contains(Components, part) {
-			return nil, fmt.Errorf("unknown component %q in --with; choose from %s, all or none", part, strings.Join(Components, ", "))
+	default:
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if !slices.Contains(Components, part) {
+				return nil, fmt.Errorf("unknown component %q in --with; choose from %s, all or none", part, strings.Join(Components, ", "))
+			}
+			with[part] = true
 		}
-		with[part] = true
+	}
+	if with["migrations"] && !with["postgres"] {
+		return nil, errors.New("--with migrations needs postgres too")
 	}
 	return with, nil
 }

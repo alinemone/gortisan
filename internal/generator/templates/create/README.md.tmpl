@@ -1,125 +1,70 @@
 # {{.Title}}
 
-Created with `gortisan create`. Every file here belongs to this project: nothing
-imports gortisan, and gortisan is not in `go.mod`. Change anything.
+Created with gortisan. Every file here belongs to this
+project: nothing imports gortisan, and gortisan is not in `go.mod`.
 
 ## Run
 
 ```bash
-cp .env.example .env
-./gortisan run               # builds cmd/api, runs it, restarts on every change
-                             # (or: go run ./cmd/api)
+cp .env.example .env         # point it at your services
+./gortisan run               # builds, runs `serve`, restarts on every change
+                             # (or: go run . serve)
 curl localhost:8000/ping     # {"ping":"pong"}
 curl localhost:8000/health   # {"status":"pass","checks":{...}}
-
-```
-
-
-## Layout
-
-```
-cmd/api/main.go           builds every dependency in order and starts the HTTP service
-internal/
-  domain/                 the business — no HTTP, no Kafka
-    user/                 one package per subject; group them when there are many (sales/order)
-      user.go             the struct — the table, with bun tags
-      errors.go           failures in business terms (ErrNotFound…)
-      store.go            what the service needs from storage
-      repository.go       implements the store on orm.Repository (bun)
-      service.go          the rules — what the API and workers call
-  api/                    HTTP
-    router.go             /ping, /health, and one line per API version
-    v1/routes.go          every v1 endpoint
-    v1/users/           handler.go, request.go (inputs), response.go (outputs)
-
-  platform/               infrastructure — no business rules
-    config/ server/ validate/ problem/ health/
-    trans/lang/fa.json    every text the API shows, by key
-{{- if .Postgres}}
-    database/             opens the database from the config
-    database/orm/         bun over pgx: Repository[T], scopes, relations, transactions
+{{- if .Swagger}}
+open  localhost:8000/swagger/index.html
 {{- end}}
-{{- if .Redis}}
-    cache/
-{{- end}}
-
-tests/
-  arch_test.go            fails `go test` when a layer imports the wrong way
 ```
 
-Dependencies point one way — `api` → `domain` → `platform` —
-and `tests/arch_test.go` enforces it, including that `api/v2` never imports
-`api/v1`.
+Every feature is served under `BASE_PATH` (default `{{.BasePath}}`), e.g. `{{.BasePath}}/users`.
 
-## Rules
-
-- **Dependencies are passed, not looked up.** Constructors take what they need;
-  `cmd/api/main.go` wires them. No globals, no values hidden in `context.Context`.
-- **The domain names its errors** (`user.ErrNotFound`); the handler decides the
-  HTTP status. Any other error becomes a 500 and is logged.
-- **Validation:** a validator in `internal/api/validator/<group>/` (make:validator)
-  either stops the request (`address.NewMobile("body.mobile", m).Validate(ctx)`) or
-  joins the others (`errs.Check(ctx, ...)`, `errs.Add(...)`, `return errs.Err()`).
-- **Errors are RFC 9457 problem details** (`application/problem+json`), and every
-  text is a key of `internal/platform/trans/lang/fa.json`: `trans.Message("general:entity-not-found", "سفارش")`.
-{{- if .Postgres}}
-- **Transactions are explicit.** `orm.InTx(ctx, db, func(ctx context.Context, tx orm.IDB) error { ... })`
-  and `repo.WithTx(tx)`.
-
-## The database layer
-
-A model is a struct with bun tags ([bun](https://bun.uptrace.dev) over pgx):
-
-```go
-type Invoice struct {
-	bun.BaseModel `bun:"table:invoices"`
-
-	ID        int64     `bun:"id,pk,autoincrement" json:"id"`
-	Number    string    `bun:"number" json:"number"`
-	Items     []*Item   `bun:"rel:has-many,join:id=invoice_id" json:"items,omitempty"`
-	CreatedAt time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
-}
-```
-
-The repository uses `orm.Repository[T]` (Find, First, Get, Count, Exists,
-Paginate, Create, CreateMany, Update, Delete, ForceDelete, Restore) with scopes
-(`orm.Where`, `orm.OrderBy`, `orm.Limit`, `orm.With` for relations, ...), and
-returns the domain's own `ErrNotFound`:
-
-```go
-invoice, err := r.rows.Find(ctx, id, orm.With("Items"), orm.With("Items.Statuses"))
-return invoice, orm.MapNotFound(err, ErrNotFound)
-```
-
-Anything else is plain bun: `r.rows.Select(&dest)` or `r.rows.DB().NewSelect()`.
-`internal/platform/database/orm` imports only bun, pgx and the standard
-library, so it can become a module of its own. To add a column, add a field
-and the column. The project creates no tables: make them yourself, or with the
-migration tool you choose (goose, golang-migrate, Atlas, ...).
-{{- end}}
-
-## Generate more
-
-`./gortisan` (`gortisan.bat` or `.\gortisan.ps1` on Windows) runs the gortisan
-version this project was created with, through `go run`. It is not a dependency:
-no code imports it and `go.mod` does not list it.
+## Commands
 
 ```bash
-./gortisan list                                   # every command and flag
-{{- if .Postgres}}
-./gortisan make:model user                        # internal/domain/user
-./gortisan make:model sales/order                 # a grouped subject
+go run . --help              # every command of the service
+go run . serve               # the HTTP server
+{{- if .Migrations}}
+go run . migrate up          # apply pending migrations (also: down, status)
 {{- end}}
-./gortisan make:service user                      # internal/domain/user/service.go
-./gortisan make:handler v1/user/list              # internal/api/v1/users: handler + ListRequest + ListResponse
-./gortisan make:handler v2/user/list              # a second API version
-./gortisan make:enum user/status --members "active,blocked"
-./gortisan make:validator address/mobile
-./gortisan make:middleware request_id
-./gortisan make:client payment
-{{- if .Redis}}
-./gortisan make:cache user/profile --type "*User"
-{{- end}}
-
 ```
+
+In production the image runs `{{.Name}} serve`{{if .Migrations}}; with `RUN_MIGRATIONS=true`
+`deploy/entrypoint.sh` runs `{{.Name}} migrate up` first{{end}}. Build it with
+`docker build -f deploy/Dockerfile .`.
+
+## Layout and rules
+
+See [AGENTS.md](AGENTS.md): what each directory owns, what a feature package
+holds, and the rules `tests/arch_test.go` enforces.
+
+## Generate code
+
+`./gortisan` (`gortisan.bat` or `.\gortisan.ps1` on Windows) runs the gortisan
+version this project pins:
+
+```bash
+./gortisan make:feature user --fields "mobile:string,name:string"
+./gortisan make:handler user/list
+./gortisan route:list
+./gortisan list              # every command
+./gortisan upgrade           # pin the latest gortisan in the scripts
+```
+
+If `./gortisan` says the module is not found, set the company Go settings once:
+
+```bash
+go env -w GOPRIVATE=git.basalam.dev
+go env -w GOPROXY=https://repo.basalam.dev/artifactory/api/go/basalam-golang-local,https://proxy.golang.org,direct
+git config --global url."git@git.basalam.dev:".insteadOf "https://git.basalam.dev/"
+```
+
+## Tests
+
+```bash
+go test ./...                # unit tests and the dependency rules
+```
+{{- if .Postgres}}
+
+`internal/platform/orm` also has integration tests against a real database;
+they run when `ORM_TEST_DSN` points at one and are skipped otherwise.
+{{- end}}

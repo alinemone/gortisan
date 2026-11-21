@@ -1,0 +1,37 @@
+---
+name: gortisan
+description: Add code to this service with the project's generator — a feature, an endpoint, a migration, a client, a validator — so files land where AGENTS.md says and get wired into internal/app. Use before creating a new package, handler, DTO, route or migration by hand.
+---
+
+# Adding code with gortisan
+
+This project was created by gortisan, which writes code into it but is not a
+dependency. Run it through the script in the project root — it runs the
+gortisan version the project pins:
+
+- `./gortisan` on macOS, Linux and Git Bash; `gortisan.bat` or `.\gortisan.ps1` on Windows.
+
+| To add | Run |
+|---|---|
+| A feature (entity, service, storage, handler, DTO, routes, test) | `./gortisan make:feature <name> [--fields "a:string,b:int"] [--soft-delete]` |
+| An endpoint of a feature | `./gortisan make:handler <feature>/<action>` (list, get, create, update, delete, or any name) |
+{{- if .Migrations}}
+| A schema change | `./gortisan make:migration <name>`, then `go run . migrate up` |
+{{- end}}
+| An enum | `./gortisan make:enum <feature>/<name> --members "a,b,c"` |
+| A reusable validator | `./gortisan make:validator <group>/<name>` |
+| A client for one of our services / a third-party API | `./gortisan make:client <name>` / `./gortisan make:external <name>` |
+| A middleware | `./gortisan make:middleware <name>` |
+| A test | `./gortisan make:test <feature>` or `./gortisan make:test <feature>/<action>` |
+
+Then:
+
+1. Read what the command printed: it lists anything left to do by hand.
+2. Fill in the generated code (the handler body, the DTO fields, the SQL).
+{{- if .Swagger}}
+3. Run `./gortisan swag` when a handler's swag comments changed.
+{{- end}}
+4. Run `go test ./...` — it includes `tests/arch_test.go`, which fails when a
+   feature imports another feature or shared code imports a feature.
+
+`./gortisan route:list` shows every endpoint; `./gortisan list` every command.

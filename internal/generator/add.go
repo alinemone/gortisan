@@ -2,34 +2,34 @@ package generator
 
 import (
 	"fmt"
-	"go/parser"
-	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // componentOutputs are the files a --with component brings to a project.
+// The first one marks the component as present.
 func componentOutputs(component string) []output {
 	switch component {
 	case "postgres":
-		return []output{
-			{"internal/platform/database/database.go", "create/database.go.tmpl"},
-			{"internal/platform/database/orm/orm.go", "create/orm/orm.go.tmpl"},
-			{"internal/platform/database/orm/db.go", "create/orm/db.go.tmpl"},
-			{"internal/platform/database/orm/errors.go", "create/orm/errors.go.tmpl"},
-			{"internal/platform/database/orm/query.go", "create/orm/query.go.tmpl"},
-			{"internal/platform/database/orm/relation.go", "create/orm/relation.go.tmpl"},
-			{"internal/platform/database/orm/repository.go", "create/orm/repository.go.tmpl"},
-			{"internal/platform/database/orm/pagination.go", "create/orm/pagination.go.tmpl"},
-			{"internal/platform/database/orm/tx.go", "create/orm/tx.go.tmpl"},
-			{"internal/platform/database/orm/orm_test.go", "create/orm/orm_test.go.tmpl"},
-			{"internal/platform/database/orm/integration_test.go", "create/orm/integration_test.go.tmpl"},
+		outputs := []output{{"internal/platform/postgres.go", "create/platform_postgres.go.tmpl"}}
+		for _, f := range []string{"orm", "db", "errors", "query", "relation", "repository", "pagination", "tx", "orm_test", "integration_test"} {
+			outputs = append(outputs, output{ormDir + "/" + f + ".go", "create/orm/" + f + ".go.tmpl"})
 		}
+		return outputs
 	case "redis":
-		return []output{{"internal/platform/cache/redis.go", "create/redis.go.tmpl"}}
+		return []output{{"internal/platform/redis.go", "create/platform_redis.go.tmpl"}}
+	case "migrations":
+		return []output{
+			{migrationsDir + "/migrations.go", "create/migrations_embed.go.tmpl"},
+			{"internal/app/migrate.go", "create/app_migrate.go.tmpl"},
+			{"cmd/migrate.go", "create/cmd_migrate.go.tmpl"},
+		}
+	case "swagger":
+		return []output{{"docs/docs.go", "create/docs.go.tmpl"}}
 	}
 	return nil
 }
@@ -37,33 +37,74 @@ func componentOutputs(component string) []output {
 // componentModules are the Go modules a component needs, at the versions
 // create pins.
 var componentModules = map[string][]string{
-	"postgres": {"github.com/jackc/pgx/v5@v5.13.0", "github.com/uptrace/bun@v1.3.0", "github.com/uptrace/bun/dialect/pgdialect@v1.3.0"},
-	"redis":    {"github.com/redis/go-redis/v9@v9.23.0"},
+	"postgres":   {"github.com/jackc/pgx/v5@v5.13.0", "github.com/uptrace/bun@v1.3.0", "github.com/uptrace/bun/dialect/pgdialect@v1.3.0"},
+	"redis":      {"github.com/redis/go-redis/v9@v9.23.0"},
+	"migrations": {"github.com/pressly/goose/v3@v3.30.1"},
+	"swagger":    {"github.com/swaggo/echo-swagger/v2@v2.0.1", "github.com/swaggo/swag@" + SwagVersion},
 }
 
 // componentEnv are the .env.example lines of a component.
 var componentEnv = map[string]string{
-	"postgres": "POSTGRES_HOST=127.0.0.1\nPOSTGRES_PORT=5432\nPOSTGRES_DATABASE=%s\nPOSTGRES_USER=postgres\nPOSTGRES_PASSWORD=postgres\nPOSTGRES_SSLMODE=prefer\n",
-	"redis":    "REDIS_ADDR=127.0.0.1:6379\nREDIS_PASSWORD=\nREDIS_DB=0\n",
+	"postgres":   "POSTGRES_HOST=127.0.0.1\nPOSTGRES_PORT=5432\nPOSTGRES_DATABASE=%s\nPOSTGRES_USER=postgres\nPOSTGRES_PASSWORD=postgres\nPOSTGRES_SSLMODE=prefer\n",
+	"redis":      "REDIS_ADDR=127.0.0.1:6379\nREDIS_PASSWORD=\nREDIS_DB=0\n",
+	"migrations": "# deploy/entrypoint.sh runs `migrate up` before the command when true.\nRUN_MIGRATIONS=false\n",
 }
 
-// Add brings a component (postgres or redis) to a project created without it:
-// it writes the component's files, its config in a file of its own
-// (internal/platform/config/<component>.go), adds its settings to
-// .env.example and its module to go.mod. Code you wrote is not changed; the
-// report lists the few lines to add to config.go and main.go.
+// componentHints are the lines to add by hand after `add`, in code that is
+// yours and so is not rewritten.
+var componentHints = map[string][]string{
+	"postgres": {
+		"internal/config/config.go: add `Postgres Postgres` to Config and `Postgres: r.postgres(),` to Load",
+		"internal/app/serve.go: db, err := platform.OpenPostgres(ctx, cfg.Postgres); if err != nil { return err }; defer db.Close() — and pass db to features",
+	},
+	"redis": {
+		"internal/config/config.go: add `Redis Redis` to Config and `Redis: r.redis(),` to Load",
+		"internal/app/serve.go: rdb, err := platform.OpenRedis(ctx, cfg.Redis); if err != nil { return err }; defer rdb.Close() — and pass rdb to features",
+	},
+	"migrations": {
+		"cmd/root.go: add migrateCommand(), to root.AddCommand",
+		"then: go run . migrate up; new ones with ./gortisan make:migration <name>",
+	},
+	"swagger": {
+		`internal/app/serve.go: import echoSwagger "github.com/swaggo/echo-swagger/v2" and _ "<module>/docs", then e.GET("/swagger/*", echoSwagger.WrapHandler)`,
+		"main.go: add the general API comments (@title, @version, @BasePath) above func main",
+		"then: go mod tidy && ./gortisan swag, and open /swagger/index.html",
+	},
+}
+
+// Add brings a component to a project created without it: it writes the
+// component's files, its config in a file of its own, its settings to
+// .env.example, its modules to go.mod and its name to .gortisan.json. Code
+// you wrote is not changed; the report lists the few lines to add by hand.
 func Add(p *Project, component string) (*Report, error) {
 	report := &Report{}
+	if err := p.Check(); err != nil {
+		return report, err
+	}
 	if !slices.Contains(Components, component) {
 		return report, fmt.Errorf("unknown component %q; choose from %s", component, strings.Join(Components, ", "))
 	}
-	marker := componentOutputs(component)[0].path
-	if p.exists(marker) {
-		return report, fmt.Errorf("%s is already in this project (%s exists)", component, marker)
+	if p.Has(component) {
+		return report, fmt.Errorf("%s is already in this project (see %s)", component, SettingsFile)
 	}
+	if component == "migrations" && !p.Has("postgres") {
+		return report, fmt.Errorf("migrations need postgres; run `./gortisan add postgres` first")
+	}
+
 	name := filepath.Base(p.Root)
-	data := projectData{Name: name, Module: p.Module, Title: title(name), Postgres: component == "postgres", Redis: component == "redis"}
-	outputs := append(componentOutputs(component), output{"internal/platform/config/" + component + ".go", "add/config_" + component + ".go.tmpl"})
+	with := map[string]bool{component: true}
+	for _, c := range p.Settings.With {
+		with[c] = true
+	}
+	data := newProjectData(name, p.Module, with, p.Settings.Version)
+	data.BasePath = p.basePath()
+	outputs := componentOutputs(component)
+	switch component {
+	case "postgres", "redis":
+		outputs = append(outputs, output{"internal/config/" + component + ".go", "add/config_" + component + ".go.tmpl"})
+	case "migrations":
+		outputs = append(outputs, output{migrationsDir + "/" + migrationStamp(time.Time{}) + "_init.sql", "create/migration_init.sql.tmpl"})
+	}
 	if err := renderAll(p.Root, outputs, data, false, report); err != nil {
 		return report, err
 	}
@@ -80,9 +121,19 @@ func Add(p *Project, component string) (*Report, error) {
 		}
 	}
 
+	p.Settings.With = nil
+	for _, c := range Components {
+		if with[c] {
+			p.Settings.With = append(p.Settings.With, c)
+		}
+	}
+	if err := writeSettings(p.Root, p.Settings); err != nil {
+		return report, err
+	}
+	report.Updated = append(report.Updated, SettingsFile)
+
 	// go get pins the version create uses; go mod tidy then records the
-	// checksums of every package the new files import (pgx/stdlib needs more
-	// than the pgx module root).
+	// checksums of every package the new files import.
 	tidied := true
 	for _, args := range [][]string{append([]string{"get"}, componentModules[component]...), {"mod", "tidy"}} {
 		cmd := exec.Command("go", args...)
@@ -96,54 +147,8 @@ func Add(p *Project, component string) (*Report, error) {
 	if tidied {
 		report.Updated = append(report.Updated, "go.mod", "go.sum")
 	}
-
-	switch component {
-	case "postgres":
-		report.next("internal/platform/config/config.go: add `Postgres Postgres` to Config and `Postgres: r.postgres(),` to Load")
-		report.next("cmd/api/main.go: db, err := database.Open(ctx, cfg.Postgres); if err != nil { return err }; defer db.Close()")
-		report.next("then: ./gortisan make:model <name>")
-	case "redis":
-		report.next("internal/platform/config/config.go: add `Redis Redis` to Config and `Redis: r.redis(),` to Load")
-		report.next("cmd/api/main.go: rdb, err := cache.Open(ctx, cfg.Redis); if err != nil { return err }; defer rdb.Close()")
+	for _, hint := range componentHints[component] {
+		report.next("%s", strings.ReplaceAll(hint, "<module>", p.Module))
 	}
 	return report, nil
-}
-
-// makeTest writes a test: for a subject (user), a service test with an
-// in-memory Store; for an action (v1/user/list), a handler test.
-func makeTest(p *Project, name string, opts MakeOptions, report *Report) error {
-	if version, f, action, err := splitAPI("test", name); err == nil {
-		dir, _ := apiPackage(version, f)
-		if err := p.require(dir+"/handler.go", "run make:handler "+name+" first"); err != nil {
-			return err
-		}
-		d := apiData(p, version, f, action)
-		src, err := os.ReadFile(filepath.Join(p.Root, filepath.FromSlash(dir), "handler.go"))
-		if err != nil {
-			return err
-		}
-		file, err := parser.ParseFile(token.NewFileSet(), "handler.go", src, parser.SkipObjectResolution)
-		if err != nil {
-			return err
-		}
-		if !slices.Contains(declNames(file), "Handler."+d.Action) {
-			return fmt.Errorf("%s/handler.go has no %s; run make:handler %s first", dir, d.Action, name)
-		}
-		d.TestURL = strings.ReplaceAll(d.Path, ":id", "1")
-		return renderAll(p.Root, []output{{dir + "/" + action + "_test.go", "make/handler_test.go.tmpl"}}, d, opts.Force, report)
-	} else if versionRE.MatchString(strings.SplitN(name, "/", 2)[0]) {
-		return err
-	}
-
-	f, err := parseFeature(name)
-	if err != nil {
-		return err
-	}
-	if err := p.require(f.Dir()+"/service.go", "run make:model "+f.Path+" and make:service "+f.Path+" first"); err != nil {
-		return err
-	}
-	if err := p.require(f.Dir()+"/store.go", "the service test fakes the Store of make:model "+f.Path); err != nil {
-		return err
-	}
-	return renderAll(p.Root, []output{{f.Dir() + "/service_test.go", "make/service_test.go.tmpl"}}, f.data(p), opts.Force, report)
 }

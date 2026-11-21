@@ -1,0 +1,103 @@
+// Package {{.Package}} calls {{.Title}}, a third-party API, over HTTP. Keep
+// its types here: convert them to your own before they reach a feature.
+package {{.Package}}
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// Config is where and how to reach the service. Read it in
+// internal/config, e.g. from {{.EnvPrefix}}_BASE_URL and {{.EnvPrefix}}_TOKEN.
+type Config struct {
+	BaseURL string
+	Token   string // sent as "Authorization: Bearer <token>" when set
+	Timeout time.Duration
+}
+
+// Client calls the service. It is safe for concurrent use.
+type Client struct {
+	baseURL string
+	token   string
+	http    *http.Client
+}
+
+func New(cfg Config) *Client {
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = 5 * time.Second
+	}
+	return &Client{
+		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
+		token:   cfg.Token,
+		http:    &http.Client{Timeout: timeout},
+	}
+}
+
+// Add one method per endpoint, e.g.
+//
+//	func (c *Client) GetWallet(ctx context.Context, userID int64) (*Wallet, error) {
+//		var wallet Wallet
+//		if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/v1/wallets/%d", userID), nil, &wallet); err != nil {
+//			return nil, err
+//		}
+//		return &wallet, nil
+//	}
+
+// Error is a response with a status outside 2xx.
+type Error struct {
+	Status int
+	Body   string
+}
+
+func (e *Error) Error() string {
+	return fmt.Sprintf("{{.Package}}: status %d: %s", e.Status, e.Body)
+}
+
+// do sends in as JSON (when not nil) and decodes a 2xx JSON body into out
+// (when not nil). Other statuses return *Error.
+func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		encoded, err := json.Marshal(in)
+		if err != nil {
+			return fmt.Errorf("{{.Package}}: encode request: %w", err)
+		}
+		body = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	if err != nil {
+		return fmt.Errorf("{{.Package}}: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("{{.Package}}: %s %s: %w", method, path, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return &Error{Status: resp.StatusCode, Body: string(raw)}
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("{{.Package}}: decode %s %s: %w", method, path, err)
+	}
+	return nil
+}

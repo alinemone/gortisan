@@ -1,0 +1,208 @@
+// Package config reads the service settings from environment variables.
+//
+// There are no struct tags and no reflection: every setting is one line in
+// Load. To add one, add a field and read it there.
+package config
+
+import (
+	"bufio"
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Config is every setting of the service.
+type Config struct {
+	Debug    bool
+	HTTP     HTTP
+	Postgres Postgres
+	Redis    Redis
+}
+
+// Postgres is the database connection.
+type Postgres struct {
+	Host           string
+	Port           uint16
+	Database       string
+	User           string
+	Password       string
+	Schema         string // search_path when set
+	SSLMode        string // disable, prefer, require, verify-full ...
+	ConnectTimeout time.Duration
+	// Connection pool (database/sql): open and idle connections, and how
+	// long a connection is reused.
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+}
+
+// Redis is the Redis connection.
+type Redis struct {
+	Addr     string
+	Password string
+	DB       int
+}
+
+// HTTP is the server: its port and the timeouts that keep slow or idle
+// clients from holding connections open.
+type HTTP struct {
+	Port string
+	// BasePath is where every feature's routes are mounted, e.g. /api; a
+	// feature's routes.go adds its own path to it (/api/users).
+	BasePath          string
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	MaxHeaderBytes    int
+	ShutdownTimeout   time.Duration
+}
+
+// Load reads the settings. A .env file in the working directory is read
+// first; variables already set in the environment win over it.
+func Load() (Config, error) {
+	if err := loadDotEnv(".env"); err != nil {
+		return Config{}, err
+	}
+
+	r := reader{}
+	cfg := Config{
+		Debug: r.boolean("DEBUG", false),
+		HTTP: HTTP{
+			Port:              r.str("PORT", "8000"),
+			BasePath:          r.str("BASE_PATH", "/api"),
+			ReadHeaderTimeout: r.duration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
+			ReadTimeout:       r.duration("HTTP_READ_TIMEOUT", 30*time.Second),
+			WriteTimeout:      r.duration("HTTP_WRITE_TIMEOUT", 30*time.Second),
+			IdleTimeout:       r.duration("HTTP_IDLE_TIMEOUT", 120*time.Second),
+			MaxHeaderBytes:    r.integer("HTTP_MAX_HEADER_BYTES", 1<<20),
+			ShutdownTimeout:   r.duration("SHUTDOWN_TIMEOUT", 10*time.Second),
+		},
+		Postgres: Postgres{
+			Host:            r.str("POSTGRES_HOST", "localhost"),
+			Port:            uint16(r.integer("POSTGRES_PORT", 5432)),
+			Database:        r.str("POSTGRES_DATABASE", "layout1"),
+			User:            r.str("POSTGRES_USER", "postgres"),
+			Password:        r.str("POSTGRES_PASSWORD", ""),
+			Schema:          r.str("POSTGRES_SCHEMA", ""),
+			SSLMode:         r.str("POSTGRES_SSLMODE", "prefer"),
+			ConnectTimeout:  r.duration("POSTGRES_CONNECT_TIMEOUT", 5*time.Second),
+			MaxOpenConns:    r.integer("POSTGRES_MAX_OPEN_CONNS", 10),
+			MaxIdleConns:    r.integer("POSTGRES_MAX_IDLE_CONNS", 5),
+			ConnMaxLifetime: r.duration("POSTGRES_CONN_MAX_LIFETIME", 30*time.Minute),
+		},
+		Redis: Redis{
+			Addr:     r.str("REDIS_ADDR", "localhost:6379"),
+			Password: r.str("REDIS_PASSWORD", ""),
+			DB:       r.integer("REDIS_DB", 0),
+		},
+	}
+	return cfg, errors.Join(r.errs...)
+}
+
+// reader reads typed variables and collects every malformed one, so Load
+// reports them all at once.
+type reader struct {
+	errs []error
+}
+
+func (r *reader) str(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+// list reads a comma-separated value.
+func (r *reader) list(key string, fallback []string) []string {
+	value, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	var items []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func (r *reader) integer(key string, fallback int) int {
+	value, ok := os.LookupEnv(key)
+	if !ok || value == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		r.errs = append(r.errs, fmt.Errorf("%s: %q is not an integer", key, value))
+		return fallback
+	}
+	return n
+}
+
+func (r *reader) boolean(key string, fallback bool) bool {
+	value, ok := os.LookupEnv(key)
+	if !ok || value == "" {
+		return fallback
+	}
+	b, err := strconv.ParseBool(value)
+	if err != nil {
+		r.errs = append(r.errs, fmt.Errorf("%s: %q is not a boolean", key, value))
+		return fallback
+	}
+	return b
+}
+
+func (r *reader) duration(key string, fallback time.Duration) time.Duration {
+	value, ok := os.LookupEnv(key)
+	if !ok || value == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		r.errs = append(r.errs, fmt.Errorf("%s: %q is not a duration such as 5s", key, value))
+		return fallback
+	}
+	return d
+}
+
+// loadDotEnv sets the KEY=VALUE lines of path that are not already in the
+// environment. A missing file is not an error.
+func loadDotEnv(path string) error {
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for line := 1; scanner.Scan(); line++ {
+		text := strings.TrimSpace(scanner.Text())
+		if text == "" || strings.HasPrefix(text, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(strings.TrimPrefix(text, "export "), "=")
+		if !ok {
+			return fmt.Errorf("%s:%d: expected KEY=VALUE", path, line)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
+			value = value[1 : len(value)-1]
+		}
+		if _, set := os.LookupEnv(key); set {
+			continue
+		}
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
+}

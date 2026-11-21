@@ -1,0 +1,78 @@
+package server
+
+import (
+{{- if or .Postgres .Redis}}
+	"context"
+{{- end}}
+	"net/http"
+{{- if or .Postgres .Redis}}
+	"time"
+{{- end}}
+
+{{- if .Postgres}}
+	"github.com/uptrace/bun"
+{{- end}}
+	"github.com/labstack/echo/v5"
+{{- if .Redis}}
+	"github.com/redis/go-redis/v9"
+{{- end}}
+)
+
+// Health answers the liveness and readiness probes, /ping and /health. They
+// are mounted outside BASE_PATH, so the probes do not change with it.
+type Health struct {
+{{- if .Postgres}}
+	db *bun.DB
+{{- end}}
+{{- if .Redis}}
+	redis *redis.Client
+{{- end}}
+}
+
+func NewHealth({{if .Postgres}}db *bun.DB{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}redis *redis.Client{{end}}) *Health {
+	return &Health{ {{- if .Postgres}}db: db{{end}}{{if and .Postgres .Redis}}, {{end}}{{if .Redis}}redis: redis{{end -}} }
+}
+
+// Ping answers {"ping":"pong"}: the process is up.
+func (h *Health) Ping(c *echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]string{"ping": "pong"})
+}
+
+// HealthResponse is the body of Check.
+type HealthResponse struct {
+	Status string            `json:"status"`
+	Checks map[string]string `json:"checks"`
+}
+
+// Check answers 200 when every dependency responds, 503 otherwise.
+func (h *Health) Check(c *echo.Context) error {
+{{- if or .Postgres .Redis}}
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Second)
+	defer cancel()
+{{end}}
+	response := HealthResponse{Status: "pass", Checks: map[string]string{}}
+{{- if .Postgres}}
+	response.Checks["postgres"] = "up"
+	if err := h.db.PingContext(ctx); err != nil {
+		response.Status, response.Checks["postgres"] = "fail", "down"
+	}
+{{- end}}
+{{- if .Redis}}
+	response.Checks["redis"] = "up"
+	if err := h.redis.Ping(ctx).Err(); err != nil {
+		response.Status, response.Checks["redis"] = "fail", "down"
+	}
+{{- end}}
+
+	status := http.StatusOK
+	if response.Status != "pass" {
+		status = http.StatusServiceUnavailable
+	}
+	return c.JSON(status, response)
+}
+
+// Register mounts /ping and /health on e.
+func (h *Health) Register(e *echo.Echo) {
+	e.GET("/ping", h.Ping)
+	e.GET("/health", h.Check)
+}

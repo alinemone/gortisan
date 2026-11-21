@@ -1,0 +1,56 @@
+package server
+
+import (
+	"bytes"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/labstack/echo/v5"
+
+	"example.com/compat/internal/server/validate"
+)
+
+func TestErrors(t *testing.T) {
+	var logs bytes.Buffer
+	e := New(slog.New(slog.NewJSONHandler(&logs, nil)))
+	e.GET("/panic", func(c *echo.Context) error { panic("boom") })
+	e.GET("/forbidden", func(c *echo.Context) error {
+		return echo.NewHTTPError(http.StatusForbidden, "not yours")
+	})
+	e.GET("/invalid", func(c *echo.Context) error {
+		var errs validate.Errors
+		errs.Add("path.id", "general:field-required", "id")
+		return errs.Err()
+	})
+
+	tests := []struct {
+		path   string
+		status int
+		body   string
+	}{
+		{"/panic", http.StatusInternalServerError, `{"type":"about:blank","title":"Internal Server Error","status":500}`},
+		{"/forbidden", http.StatusForbidden, `{"type":"about:blank","title":"Forbidden","status":403,"detail":"not yours"}`},
+		{"/invalid", http.StatusUnprocessableEntity, `{"type":"about:blank","title":"Unprocessable Entity","status":422,"detail":"داده‌های ارسال‌شده معتبر نیستند.","errors":[{"parameter":"id","code":"general:field-required","detail":"id اجباری است."}]}`},
+		{"/missing", http.StatusNotFound, `{"type":"about:blank","title":"Not Found","status":404}`},
+	}
+	for _, tt := range tests {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+		if rec.Code != tt.status || strings.TrimSpace(rec.Body.String()) != tt.body {
+			t.Errorf("GET %s = %d %s, want %d %s", tt.path, rec.Code, rec.Body.String(), tt.status, tt.body)
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+			t.Errorf("GET %s: Content-Type %q", tt.path, ct)
+		}
+	}
+
+	if !strings.Contains(logs.String(), `"msg":"panic"`) || !strings.Contains(logs.String(), `"error":"panic: boom"`) {
+		t.Errorf("the panic was not logged with its error:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), `"path":"/forbidden","status":403`) {
+		t.Errorf("the request log does not show the final status:\n%s", logs.String())
+	}
+}

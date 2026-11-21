@@ -10,27 +10,33 @@ type Field struct {
 	Column   string // user_id
 	GoName   string // UserID
 	GoType   string // int64, *string, ...
+	SQLType  string // BIGINT
 	Nullable bool
 	JSON     bool
 	Tag      string // the bun tag: user_id, meta,type:jsonb
 }
 
-// fieldTypes are the types --fields accepts, and the Go type of each.
-var fieldTypes = map[string]string{
-	"string":  "string",
-	"text":    "string",
-	"int":     "int64",
-	"int64":   "int64",
-	"bigint":  "int64",
-	"int32":   "int32",
-	"integer": "int32",
-	"int16":   "int16",
-	"float":   "float64",
-	"float64": "float64",
-	"bool":    "bool",
-	"time":    "time.Time",
-	"json":    "json.RawMessage",
-	"jsonb":   "json.RawMessage",
+type columnType struct {
+	goType  string
+	sqlType string
+}
+
+// fieldTypes are the types --fields accepts.
+var fieldTypes = map[string]columnType{
+	"string":  {"string", "TEXT"},
+	"text":    {"string", "TEXT"},
+	"int":     {"int64", "BIGINT"},
+	"int64":   {"int64", "BIGINT"},
+	"bigint":  {"int64", "BIGINT"},
+	"int32":   {"int32", "INTEGER"},
+	"integer": {"int32", "INTEGER"},
+	"int16":   {"int16", "SMALLINT"},
+	"float":   {"float64", "DOUBLE PRECISION"},
+	"float64": {"float64", "DOUBLE PRECISION"},
+	"bool":    {"bool", "BOOLEAN"},
+	"time":    {"time.Time", "TIMESTAMPTZ"},
+	"json":    {"json.RawMessage", "JSONB"},
+	"jsonb":   {"json.RawMessage", "JSONB"},
 }
 
 // reservedColumns are written by every model.
@@ -65,10 +71,11 @@ func parseFields(spec string) ([]Field, error) {
 		typ = strings.ToLower(strings.TrimSpace(typ))
 		nullable := strings.HasSuffix(typ, "?")
 		typ = strings.TrimSuffix(typ, "?")
-		goType, ok := fieldTypes[typ]
+		ct, ok := fieldTypes[typ]
 		if !ok {
 			return nil, fmt.Errorf("field %q has unknown type %q; use one of %s", column, typ, typeNames())
 		}
+		goType := ct.goType
 		isJSON := goType == "json.RawMessage"
 		// json.RawMessage is a slice, so NULL already scans into nil.
 		if nullable && !isJSON {
@@ -87,6 +94,7 @@ func parseFields(spec string) ([]Field, error) {
 			Column:   column,
 			GoName:   pascal(column),
 			GoType:   goType,
+			SQLType:  ct.sqlType,
 			Nullable: nullable,
 			JSON:     isJSON,
 			Tag:      tag,

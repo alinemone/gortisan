@@ -6,9 +6,19 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// {{.Action}} is registered in internal/api/{{.Version}}/routes.go, e.g.
+// {{.Action}} serves {{.Method}} {{.Route}}{{.Path}} (mounted in routes.go).
+{{- if .Swagger}}
 //
-//	g.{{.Method}}("{{.Path}}", {{.Var}}.{{.Action}})
+//	@Summary	{{.Action}} {{.Words}}
+//	@Tags		{{.Tag}}
+//	@Accept		json
+//	@Produce	json
+{{- if .HasID}}
+//	@Param		id	path	int	true	"{{.Words}} id"
+{{- end}}
+//	@Success	200	{object}	{{.Action}}Response
+//	@Router		{{.SwagPath}} [{{.MethodLower}}]
+{{- end}}
 func (h *Handler) {{.Action}}(c *echo.Context) error {
 	ctx := c.Request().Context()
 	var req {{.Action}}Request
@@ -19,10 +29,10 @@ func (h *Handler) {{.Action}}(c *echo.Context) error {
 		return err
 	}
 
-	// Call the domain and write {{.Action}}Response, e.g.
+	// Call the service and write {{.Action}}Response, e.g.
 	//
 	//	result, err := h.service.Find(ctx, req.ID)
-	//	if errors.Is(err, {{.DomainPkg}}.ErrNotFound) {
+	//	if errors.Is(err, ErrNotFound) {
 	//		return echo.NewHTTPError(http.StatusNotFound, "{{.Words}} not found")
 	//	}
 	//	return c.JSON(http.StatusOK, {{.Action}}Response{...})

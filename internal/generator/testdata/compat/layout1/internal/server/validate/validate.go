@@ -1,0 +1,175 @@
+// Package validate checks requests. A validator is a small type that embeds
+// Base and has a Passes method (gortisan make:validator writes one). Use it
+// in one of two ways:
+//
+//	// Stop at the first failure, with the validator's own status:
+//	if err := address.NewMobile("body.mobile", r.Mobile).Validate(ctx); err != nil {
+//		return err
+//	}
+//
+//	// Or report every invalid field together, as one 422:
+//	var errs validate.Errors
+//	if r.Quantity <= 0 {
+//		errs.Add("body.quantity", "general:min", "تعداد", 1)
+//	}
+//	if err := errs.Check(ctx, address.NewMobile("body.mobile", r.Mobile)); err != nil {
+//		return err // the check itself failed, e.g. the database is down
+//	}
+//	return errs.Err()
+//
+// A failure is written as RFC 9457 problem details (internal/server/response).
+package validate
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"example.com/compat/internal/platform/trans"
+	"example.com/compat/internal/server/response"
+)
+
+// Base is embedded in every validator: where its error points, its message
+// and its status.
+type Base struct {
+	// Location is where the value came from: "body.mobile",
+	// "body.items.0.quantity", "query.page", "path.id" or "header.X-Shop".
+	// A location without one of these prefixes is a body field.
+	Location string
+	// Code is the key of the message in trans/lang/fa.json, e.g.
+	// "address:invalid-mobile". Clients receive it to match on.
+	Code string
+	// Status is the status Validate fails with; 0 means 422.
+	Status int
+}
+
+// Message is the text of Code. Define Message on the validator itself to put
+// arguments in, e.g. trans.Message(v.Code, "تعداد", v.min).
+func (b Base) Message() string { return trans.Message(b.Code) }
+
+func (b Base) base() Base { return b }
+
+// Validator is a check that embeds Base.
+type Validator interface {
+	// Passes reports whether the value is valid. An error means the check
+	// could not run, not that the value is invalid.
+	Passes(ctx context.Context) (bool, error)
+	// Message explains a failure to the client.
+	Message() string
+	base() Base
+}
+
+// Run checks v: nil when it passes, an *Error with v's status when it does
+// not, or the error that kept the check from running.
+func Run(ctx context.Context, v Validator) error {
+	ok, err := v.Passes(ctx)
+	if err != nil || ok {
+		return err
+	}
+	b := v.base()
+	return &Error{Status: b.Status, Fields: []response.Error{field(b.Location, b.Code, v.Message())}}
+}
+
+// Errors collects invalid fields to report them together. The zero value is
+// ready to use.
+type Errors struct {
+	fields []response.Error
+}
+
+// Add records that the value at location is invalid, with the text of code
+// in trans/lang/fa.json and args put in its %s.
+func (e *Errors) Add(location, code string, args ...any) {
+	e.fields = append(e.fields, field(location, code, trans.Message(code, args...)))
+}
+
+// Check runs v and records its failure. It returns an error only when the
+// check could not run.
+func (e *Errors) Check(ctx context.Context, v Validator) error {
+	ok, err := v.Passes(ctx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		b := v.base()
+		e.fields = append(e.fields, field(b.Location, b.Code, v.Message()))
+	}
+	return nil
+}
+
+// Empty reports whether no field was recorded.
+func (e *Errors) Empty() bool {
+	return len(e.fields) == 0
+}
+
+// Err returns nil when no field was recorded, otherwise a 422 *Error that
+// lists every one.
+func (e *Errors) Err() error {
+	if e.Empty() {
+		return nil
+	}
+	return &Error{Fields: e.fields}
+}
+
+// Error is a failed validation. The server's error handler writes it as
+// problem details with its status.
+type Error struct {
+	// Status is 0 for 422.
+	Status int
+	Fields []response.Error
+}
+
+func (e *Error) Error() string {
+	return "validation failed: " + strconv.Itoa(len(e.Fields)) + " invalid field(s)"
+}
+
+// StatusCode is the status of the response, 422 unless the validator set one.
+func (e *Error) StatusCode() int {
+	if e.Status == 0 {
+		return http.StatusUnprocessableEntity
+	}
+	return e.Status
+}
+
+// ResponseBody is the problem details written to the client. A 422 says the
+// data was invalid; another status (a 404 from a validator) carries the
+// message of the field that failed.
+func (e *Error) ResponseBody() any {
+	status := e.StatusCode()
+	detail := trans.Message("general:invalid-data")
+	if status != http.StatusUnprocessableEntity && len(e.Fields) == 1 {
+		detail = e.Fields[0].Detail
+	}
+	body := response.New(status, detail)
+	body.Errors = e.Fields
+	return body
+}
+
+// field turns a location into a JSON Pointer or a parameter name.
+func field(location, code, detail string) response.Error {
+	f := response.Error{Code: code, Detail: detail}
+	where, name, found := strings.Cut(location, ".")
+	switch {
+	case found && (where == "query" || where == "path" || where == "header"):
+		f.Parameter = name
+	case found && where == "body":
+		f.Pointer = pointer(name)
+	case where == "body":
+		f.Pointer = "#"
+	default:
+		f.Pointer = pointer(location)
+	}
+	return f
+}
+
+// pointer turns "items.0.quantity" into "#/items/0/quantity" (RFC 6901).
+func pointer(path string) string {
+	escape := strings.NewReplacer("~", "~0", "/", "~1")
+	var b strings.Builder
+	b.WriteString("#")
+	for _, part := range strings.Split(path, ".") {
+		b.WriteString("/")
+		b.WriteString(escape.Replace(part))
+	}
+	return b.String()
+}
